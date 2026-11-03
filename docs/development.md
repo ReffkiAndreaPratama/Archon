@@ -40,15 +40,15 @@ scans the source tree. Warm builds are much faster.
 cargo test -p archon-core
 ```
 
-The current suite (17 tests) covers:
+The current suite (18 tests) covers:
 
 - **Unit (`security.rs`)** — traversal and absolute paths, Windows reserved names,
   alternate data streams, trailing dots/spaces, empty paths.
 - **Integration (`tests/zip_engine.rs`)** — create/list/extract/test round-trips,
-  empty folders, Store preset, excludes, Deflate levels, cancellation, AES password
-  required/wrong/correct, corrupted entries, symlink entries, overwrite policies,
-  selected entries, path traversal, duplicate/case-colliding entries, unsupported
-  formats and honest errors.
+  empty folders, Store preset, excludes, Deflate levels, cancellation, AES and
+  ZipCrypto password required/wrong/correct, corrupted entries, symlink entries,
+  overwrite policies, selected entries, path traversal, duplicate/case-colliding
+  entries, unsupported formats and honest errors.
 
 Tests create their own temporary directories and do not touch user data.
 

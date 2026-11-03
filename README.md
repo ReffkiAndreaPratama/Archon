@@ -86,9 +86,9 @@ npm run build            # production frontend bundle
 cargo test -p archon-core
 ```
 
-The Phase 1 suite contains 17 tests: 4 unit tests for path validation and 13
-integration tests covering round-trips, AES, traversal, collisions, corruption,
-cancellation, overwrite policies and unsupported formats.
+The Phase 1 suite contains 18 tests: 4 unit tests for path validation and 14
+integration tests covering round-trips, AES and ZipCrypto passwords, traversal,
+collisions, corruption, cancellation, overwrite policies and unsupported formats.
 
 ## Command-line usage
 
@@ -137,8 +137,8 @@ written to logs or progress events.
 ## Desktop workflow
 
 1. **Archive** — open a ZIP, browse the folder tree, search, select files and
-   extract or test them. Unsupported formats open in the same view and display the
-   engine's honest “planned” error instead of pretending to work.
+   extract or test them. Unsupported formats are rejected with the engine's honest
+   “planned” error message instead of pretending to work.
 2. **Create** — add files/folders (picker or drag-and-drop), choose a destination,
    preset, optional Deflate level, excludes and AES-256 encryption.
 3. **Formats** — a live capability matrix read from the engine, so the UI cannot

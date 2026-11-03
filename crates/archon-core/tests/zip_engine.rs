@@ -262,6 +262,61 @@ fn aes_password_required_wrong_and_correct() {
 }
 
 #[test]
+fn zipcrypto_archives_are_read_with_the_correct_password() {
+    let temp = TempDir::new().unwrap();
+    let archive = temp.path().join("legacy.zip");
+    let engine = registry();
+    let ctx = OperationContext::new("zipcrypto");
+    let password = "legacy passphrase";
+
+    // Write the fixture with the zip crate's ZipCrypto writer so the test proves
+    // Archon can read archives produced by older tools, not just its own AES output.
+    {
+        use zip::unstable::write::FileOptionsExt;
+
+        let writer = fs::File::create(&archive).unwrap();
+        let mut zip = ZipWriter::new(writer);
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .with_deprecated_encryption(password.as_bytes())
+            .unwrap();
+        zip.start_file("legacy/secret.txt", options).unwrap();
+        zip.write_all(b"legacy zipcrypto payload").unwrap();
+        zip.finish().unwrap();
+    }
+
+    let listing = engine.list(&archive).unwrap();
+    assert_eq!(listing.entries.len(), 1);
+    assert_eq!(listing.encrypted_entries, 1);
+    assert!(listing.entries[0].encrypted);
+
+    let error = engine
+        .extract(&extract_options(&archive, &temp.path().join("missing")), &ctx)
+        .unwrap_err();
+    assert_eq!(error.code(), "password_required");
+
+    let mut wrong = extract_options(&archive, &temp.path().join("wrong"));
+    wrong.password = Some("incorrect".into());
+    let error = engine.extract(&wrong, &ctx).unwrap_err();
+    assert_eq!(error.code(), "invalid_password", "{error}");
+
+    let mut correct = extract_options(&archive, &temp.path().join("correct"));
+    correct.password = Some(password.into());
+    let report = engine.extract(&correct, &ctx).unwrap();
+    assert_eq!(report.extracted_files, 1);
+    assert_eq!(
+        fs::read_to_string(temp.path().join("correct/legacy/secret.txt")).unwrap(),
+        "legacy zipcrypto payload"
+    );
+
+    let error = engine.test(&archive, None, &ctx).unwrap_err();
+    assert_eq!(error.code(), "password_required");
+    let error = engine.test(&archive, Some("incorrect"), &ctx).unwrap_err();
+    assert_eq!(error.code(), "invalid_password");
+    assert!(engine.test(&archive, Some(password), &ctx).unwrap().ok);
+}
+
+#[test]
 fn exclude_patterns_and_store_preset() {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("input");

@@ -32,7 +32,7 @@ First public Phase 1 release. ZIP is the only supported archive format.
 - `archon` CLI with `list`, `info`, `extract`, `create` and `test`, JSON output,
   terminal progress and password input from `ARCHON_PASSWORD`, stdin or a hidden prompt.
   The binary is `archon-cli`, distinct from the desktop `archon.exe`.
-- 17 automated tests (4 security unit tests, 13 ZIP integration tests).
+- 18 automated tests (4 security unit tests, 14 ZIP integration tests).
 - Documentation: architecture, formats, security, installation, development,
   contribution guide and third-party notices.
 
