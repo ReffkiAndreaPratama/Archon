@@ -1,0 +1,25 @@
+[package]
+name = "archon-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Archive engine, security and filesystem core for Archon"
+
+[dependencies]
+zip = { version = "9.2", default-features = false, features = [
+    "deflate-flate2-zlib-rs",
+    "aes-crypto",
+    "time",
+] }
+serde.workspace = true
+thiserror.workspace = true
+walkdir = "2.5"
+globset = "0.4"
+fs2 = "0.4"
+filetime = "0.2"
+time = "0.3"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

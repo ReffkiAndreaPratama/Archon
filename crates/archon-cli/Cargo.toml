@@ -1,0 +1,19 @@
+[package]
+name = "archon-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Archon command-line archive manager"
+
+[[bin]]
+name = "archon-cli"
+path = "src/main.rs"
+
+[dependencies]
+archon-core = { path = "../archon-core" }
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+rpassword = "7"
+zeroize = "1"
