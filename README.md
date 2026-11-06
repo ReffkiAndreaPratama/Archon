@@ -106,7 +106,8 @@ folders and unsupported formats.
 ## Command-line usage
 
 The CLI binary is `archon-cli` (`cargo run -p archon-cli -- …`, or
-`target/release/archon-cli.exe` after a release build). It is intentionally named
+`cargo build --release -p archon-cli` to produce `target/release/archon-cli.exe`;
+`npm run tauri build` builds only the desktop app). It is intentionally named
 differently from the desktop executable `archon.exe` so the two builds cannot overwrite
 each other in a shared Cargo target directory.
 
