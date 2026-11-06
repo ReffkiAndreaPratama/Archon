@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use archon_core::split::{JoinReport, SplitReport, join_volumes, split_archive};
 use archon_core::{
     ArchiveInfo, ArchiveListing, CreateOptions, CreateReport, EngineRegistry, ExtractOptions,
     ExtractReport, FormatCapability, OperationContext, TestReport,
@@ -53,19 +54,29 @@ pub async fn format_capabilities() -> Result<Vec<FormatCapability>, CommandError
 }
 
 #[tauri::command]
-pub async fn list_archive(path: String) -> Result<ArchiveListing, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || EngineRegistry::new().list(&PathBuf::from(path)))
-        .await
-        .map_err(join_error)?
-        .map_err(CommandError::from)
+pub async fn list_archive(
+    path: String,
+    password: Option<String>,
+) -> Result<ArchiveListing, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        EngineRegistry::new().list(&PathBuf::from(path), password.as_deref())
+    })
+    .await
+    .map_err(join_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub async fn archive_info(path: String) -> Result<ArchiveInfo, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || EngineRegistry::new().info(&PathBuf::from(path)))
-        .await
-        .map_err(join_error)?
-        .map_err(CommandError::from)
+pub async fn archive_info(
+    path: String,
+    password: Option<String>,
+) -> Result<ArchiveInfo, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        EngineRegistry::new().info(&PathBuf::from(path), password.as_deref())
+    })
+    .await
+    .map_err(join_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -160,6 +171,103 @@ pub async fn test_archive(
     }
 
     result.map_err(join_error)?.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn add_entries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job_id: String,
+    archive: String,
+    sources: Vec<String>,
+) -> Result<CreateReport, CommandError> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .jobs
+        .lock()
+        .expect("job registry poisoned")
+        .insert(job_id.clone(), cancel.clone());
+
+    let context =
+        OperationContext::with_cancel(job_id.clone(), cancel).with_reporter(move |event| {
+            let _ = app.emit("archon://progress", event);
+        });
+
+    let sources: Vec<PathBuf> = sources.into_iter().map(PathBuf::from).collect();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        EngineRegistry::new().add_entries(&PathBuf::from(archive), &sources, &context)
+    })
+    .await;
+
+    if let Ok(mut jobs) = state.jobs.lock() {
+        jobs.remove(&job_id);
+    }
+
+    result.map_err(join_error)?.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn remove_entries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job_id: String,
+    archive: String,
+    entries: Vec<String>,
+) -> Result<(), CommandError> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .jobs
+        .lock()
+        .expect("job registry poisoned")
+        .insert(job_id.clone(), cancel.clone());
+
+    let context =
+        OperationContext::with_cancel(job_id.clone(), cancel).with_reporter(move |event| {
+            let _ = app.emit("archon://progress", event);
+        });
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        EngineRegistry::new().remove_entries(&PathBuf::from(archive), &entries, &context)
+    })
+    .await;
+
+    if let Ok(mut jobs) = state.jobs.lock() {
+        jobs.remove(&job_id);
+    }
+
+    result.map_err(join_error)?.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn split_archive_volumes(
+    path: String,
+    size_mb: u64,
+) -> Result<SplitReport, CommandError> {
+    if size_mb == 0 {
+        return Err(CommandError {
+            code: "configuration".into(),
+            message: "--size-mb must be greater than zero".into(),
+        });
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        split_archive(&PathBuf::from(path), size_mb.saturating_mul(1024 * 1024))
+    })
+    .await
+    .map_err(join_error)?
+    .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn join_volumes_command(
+    first: String,
+    output: String,
+) -> Result<JoinReport, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        join_volumes(&PathBuf::from(first), &PathBuf::from(output))
+    })
+    .await
+    .map_err(join_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]

@@ -7,6 +7,9 @@ pub mod fsutil;
 pub mod model;
 pub mod progress;
 pub mod security;
+pub mod sevenz_engine;
+pub mod split;
+pub mod tar_engine;
 pub mod zip_engine;
 
 pub use engine::{ArchiveEngine, EngineRegistry, detect_format};

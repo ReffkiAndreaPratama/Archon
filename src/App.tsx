@@ -1,12 +1,14 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   FolderOpen,
   HardDrive,
   LockKeyhole,
+  Scissors,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -14,6 +16,7 @@ import { ArchiveView } from "./components/ArchiveView";
 import { CreateView } from "./components/CreateView";
 import { ExtractDialog } from "./components/ExtractDialog";
 import { FormatsView } from "./components/FormatsView";
+import { Modal } from "./components/Modal";
 import { PasswordDialog } from "./components/PasswordDialog";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { Sidebar, type AppView } from "./components/Sidebar";
@@ -161,6 +164,9 @@ export default function App() {
   const [extractState, setExtractState] = useState<{ selection: string[] } | null>(null);
   const [testResult, setTestResult] = useState<TestReport | null>(null);
   const [createDraft, setCreateDraft] = useState<CreateDraft>(emptyCreateDraft);
+  const [removeState, setRemoveState] = useState<{ entries: string[] } | null>(null);
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitSize, setSplitSize] = useState("25");
 
   const operationRef = useRef<OperationState | null>(null);
   const passwordResolver = useRef<((value: string | null) => void) | null>(null);
@@ -289,12 +295,47 @@ export default function App() {
     void loadCapabilities();
   }, [loadCapabilities]);
 
+  const requestPassword = useCallback(
+    (request: PasswordPromptState): Promise<string | null> =>
+      new Promise((resolve) => {
+        if (passwordResolver.current) passwordResolver.current(null);
+        passwordResolver.current = resolve;
+        setPasswordPrompt(request);
+      }),
+    [],
+  );
+
   const openArchive = useCallback(
     async (path: string, quiet = false) => {
       if (operationRef.current || opening) return;
       setOpening(true);
       try {
-        const next = await api.list(path);
+        let password = sessionPasswords.current.get(path) || undefined;
+        let attempts = 0;
+        let next: ArchiveListing;
+        for (;;) {
+          try {
+            next = await api.list(path, password);
+            break;
+          } catch (error) {
+            const commandError = toCommandError(error);
+            if (!isPasswordError(commandError) || attempts >= 3) throw error;
+            attempts += 1;
+            const value = await requestPassword({
+              title: password ? "Incorrect password" : "Password required",
+              message: password
+                ? `The password for ${basename(path)} was not accepted. Try again.`
+                : `${basename(path)} is encrypted. Enter its password to open it.`,
+              confirmLabel: "Unlock",
+              invalid: Boolean(password),
+            });
+            if (value === null) throw error;
+            password = value || undefined;
+          }
+        }
+        if (password) {
+          sessionPasswords.current.set(next.path, password);
+        }
         if (listing && listing.path !== next.path) {
           sessionPasswords.current.delete(listing.path);
         }
@@ -314,7 +355,7 @@ export default function App() {
         setOpening(false);
       }
     },
-    [listing, notifyError, opening, pushToast, rememberArchive],
+    [listing, notifyError, opening, pushToast, rememberArchive, requestPassword],
   );
 
   const chooseArchive = useCallback(async () => {
@@ -419,16 +460,6 @@ export default function App() {
       sources: current.sources.filter((source) => source.path !== path),
     }));
   }, []);
-
-  const requestPassword = useCallback(
-    (request: PasswordPromptState): Promise<string | null> =>
-      new Promise((resolve) => {
-        if (passwordResolver.current) passwordResolver.current(null);
-        passwordResolver.current = resolve;
-        setPasswordPrompt(request);
-      }),
-    [],
-  );
 
   const finishPassword = (value: string | null) => {
     const resolve = passwordResolver.current;
@@ -574,6 +605,117 @@ export default function App() {
     });
   };
 
+  const performAdd = async (directory: boolean) => {
+    if (!listing || busy) return;
+    try {
+      const selected = await openDialog({
+        title: directory ? "Add folders to archive" : "Add files to archive",
+        multiple: true,
+        directory,
+      });
+      const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+      if (paths.length === 0) return;
+
+      const report = await runJob<CreateReport>("modify", "Adding entries", (jobId) =>
+        api.addEntries(jobId, listing.path, paths),
+      );
+      await openArchive(listing.path, true);
+      pushToast({
+        tone: "success",
+        title: "Entries added",
+        detail: `${report.entryCount} ${pluralize(report.entryCount, "entry", "entries")} · ${formatBytes(report.totalSize)} → ${formatBytes(report.archiveSize)}`,
+        actionLabel: "Show in Explorer",
+        action: () => {
+          void revealItemInDir(report.output).catch(() => undefined);
+        },
+      });
+    } catch (error) {
+      notifyError(error, "Could not add entries");
+    }
+  };
+
+  const performRemove = async () => {
+    if (!listing || !removeState) return;
+    try {
+      await runJob("modify", "Removing entries", (jobId) =>
+        api.removeEntries(jobId, listing.path, removeState.entries),
+      );
+      setRemoveState(null);
+      await openArchive(listing.path, true);
+      pushToast({
+        tone: "success",
+        title: "Entries removed",
+        detail: `${removeState.entries.length} ${pluralize(removeState.entries.length, "selection")} removed from ${basename(listing.path)}`,
+      });
+    } catch (error) {
+      notifyError(error, "Could not remove entries");
+    }
+  };
+
+  const performSplit = async () => {
+    if (!listing) return;
+    const size = Number(splitSize);
+    if (!Number.isFinite(size) || size <= 0) {
+      pushToast({
+        tone: "error",
+        title: "Invalid volume size",
+        detail: "Enter a size greater than zero megabytes.",
+      });
+      return;
+    }
+    try {
+      const report = await api.splitVolumes(listing.path, Math.round(size));
+      setSplitOpen(false);
+      pushToast({
+        tone: "success",
+        title: "Archive split",
+        detail: `${report.partCount} ${pluralize(report.partCount, "volume")} of up to ${size} MB`,
+        actionLabel: "Show first volume",
+        action: () => {
+          void revealItemInDir(report.parts[0]).catch(() => undefined);
+        },
+      });
+    } catch (error) {
+      notifyError(error, "Could not split archive");
+    }
+  };
+
+  const performJoin = async () => {
+    try {
+      const selected = await openDialog({
+        title: "Select the first volume",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "First volume (.001)", extensions: ["001"] }],
+      });
+      if (typeof selected !== "string") return;
+      const base = selected.replace(/\.001$/i, "");
+      const separator = Math.max(base.lastIndexOf("\\"), base.lastIndexOf("/"));
+      const dot = base.lastIndexOf(".");
+      const suggested =
+        dot > separator
+          ? `${base.slice(0, dot)} (joined)${base.slice(dot)}`
+          : `${base} (joined)`;
+      const output = await saveDialog({
+        title: "Save joined archive",
+        defaultPath: suggested,
+      });
+      if (!output) return;
+      const report = await api.joinVolumes(selected, output);
+      pushToast({
+        tone: "success",
+        title: "Volumes joined",
+        detail: `${report.partCount} ${pluralize(report.partCount, "volume")} · ${formatBytes(report.totalBytes)}`,
+        actionLabel: "Show in Explorer",
+        action: () => {
+          void revealItemInDir(report.output).catch(() => undefined);
+        },
+      });
+    } catch (error) {
+      notifyError(error, "Could not join volumes");
+    }
+  };
+
   const performCreate = async () => {
     if (createDraft.sources.length === 0) return;
     const output = normalizeZipOutput(createDraft.output);
@@ -714,8 +856,18 @@ export default function App() {
             </span>
             <span className="topbar-pill">
               <span className="status-dot" />
-              ZIP engine
+              Archive core
             </span>
+            <button
+              type="button"
+              className="btn btn-outline btn-small"
+              onClick={() => void performJoin()}
+              disabled={busy}
+              title="Join .001, .002, ... volumes into one archive"
+            >
+              <HardDrive size={15} />
+              Join volumes
+            </button>
             <button
               type="button"
               className="btn btn-outline btn-small"
@@ -743,6 +895,10 @@ export default function App() {
                 busy={busy}
                 onTest={() => void performTest()}
                 onExtract={(selection) => setExtractState({ selection })}
+                onAddFiles={() => void performAdd(false)}
+                onAddFolders={() => void performAdd(true)}
+                onRemove={(entries) => setRemoveState({ entries })}
+                onSplit={() => setSplitOpen(true)}
                 onClose={handleCloseArchive}
                 onReveal={handleReveal}
               />
@@ -818,7 +974,7 @@ export default function App() {
               {formatBytes(listing.fileSize)}
             </span>
           ) : (
-            <span>ZIP only in Phase 1</span>
+            <span>ZIP writable · 7Z/TAR readable</span>
           )}
           <span className="statusbar-divider" />
           <span>No telemetry</span>
@@ -865,6 +1021,85 @@ export default function App() {
           archiveName={basename(listing.path)}
           onClose={() => setTestResult(null)}
         />
+      ) : null}
+
+      {removeState && listing ? (
+        <Modal
+          title="Remove entries?"
+          description={`${removeState.entries.length} ${pluralize(removeState.entries.length, "selection")} in ${basename(listing.path)}`}
+          icon={<Trash2 size={19} />}
+          onClose={() => setRemoveState(null)}
+          width="small"
+          footer={
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setRemoveState(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void performRemove()}
+                disabled={busy}
+              >
+                <Trash2 size={16} />
+                Remove
+              </button>
+            </>
+          }
+        >
+          <p className="dialog-footnote">
+            Folders remove their contents too. The archive is rewritten atomically; other
+            entries are preserved. This cannot be undone.
+          </p>
+        </Modal>
+      ) : null}
+
+      {splitOpen && listing ? (
+        <Modal
+          title="Split archive into volumes"
+          description={`${basename(listing.path)} · ${formatBytes(listing.fileSize)}`}
+          icon={<Scissors size={19} />}
+          onClose={() => setSplitOpen(false)}
+          width="small"
+          footer={
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setSplitOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void performSplit()}
+                disabled={!splitSize.trim() || Number(splitSize) <= 0}
+              >
+                <Scissors size={16} />
+                Split
+              </button>
+            </>
+          }
+        >
+          <div className="field">
+            <label htmlFor="split-size">Volume size (MB)</label>
+            <input
+              id="split-size"
+              value={splitSize}
+              inputMode="numeric"
+              onChange={(event) => setSplitSize(event.target.value)}
+            />
+            <p className="field-hint">
+              Parts are written next to the archive as .001, .002, and so on. Use Join volumes
+              to reassemble them. Existing part files are never overwritten.
+            </p>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

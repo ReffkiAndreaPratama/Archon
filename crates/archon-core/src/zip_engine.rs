@@ -7,6 +7,7 @@ use std::time::Instant;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use walkdir::WalkDir;
 use zeroize::Zeroizing;
+use zip::read::ZipFile;
 use zip::write::{SimpleFileOptions, ZipWriter};
 use zip::{AesMode, CompressionMethod, DateTime, ZipArchive};
 
@@ -45,6 +46,117 @@ impl ZipEngine {
 
     pub fn with_limits(limits: Limits) -> Self {
         Self { limits }
+    }
+
+    fn collect_additions(
+        &self,
+        sources: &[PathBuf],
+        archive: &Path,
+        ctx: &OperationContext,
+    ) -> ArchonResult<(Vec<PlannedEntry>, Vec<String>)> {
+        let archive_absolute = absolute_path(archive)?;
+        let mut planned = Vec::new();
+        let mut names = HashSet::new();
+        let mut warnings = Vec::new();
+        let mut symlinks = 0_usize;
+
+        for source in sources {
+            ctx.check_cancelled()?;
+            let metadata = fs::symlink_metadata(source).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    ArchonError::NotFound(source.to_path_buf())
+                } else {
+                    ArchonError::Io(format!("Cannot inspect {}: {error}", source.display()))
+                }
+            })?;
+            if metadata.file_type().is_symlink() {
+                symlinks += 1;
+                continue;
+            }
+
+            let canonical = source.canonicalize().map_err(|error| {
+                ArchonError::Io(format!("Cannot resolve {}: {error}", source.display()))
+            })?;
+            let parent = canonical.parent().ok_or_else(|| {
+                ArchonError::Configuration(format!(
+                    "Cannot archive a drive root directly: {}",
+                    source.display()
+                ))
+            })?;
+
+            for item in WalkDir::new(&canonical)
+                .follow_links(false)
+                .sort_by_file_name()
+            {
+                ctx.check_cancelled()?;
+                let item = item.map_err(|error| {
+                    ArchonError::Io(format!("Cannot scan {}: {error}", source.display()))
+                })?;
+                let item_path = item.path();
+                if paths_equal(item_path, &archive_absolute) {
+                    continue;
+                }
+                if item.file_type().is_symlink() {
+                    symlinks += 1;
+                    continue;
+                }
+
+                let relative = item_path.strip_prefix(parent).map_err(|_| {
+                    ArchonError::Configuration(format!(
+                        "Cannot compute an archive path for {}",
+                        item_path.display()
+                    ))
+                })?;
+                let name = archive_name_from_relative(relative)?;
+                let is_dir = item.file_type().is_dir();
+                sanitize_entry_path(&name)?;
+
+                let size = if is_dir {
+                    0
+                } else {
+                    item.metadata()
+                        .map_err(|error| {
+                            ArchonError::Io(format!(
+                                "Cannot read metadata for {}: {error}",
+                                item_path.display()
+                            ))
+                        })?
+                        .len()
+                };
+                let modified = item_path
+                    .metadata()
+                    .ok()
+                    .and_then(|value| value.modified().ok())
+                    .map(zip_time_from_system_time);
+
+                if !names.insert(name.to_lowercase()) {
+                    return Err(ArchonError::Conflict(format!(
+                        "Two selected files would be stored at the same archive path: {name}"
+                    )));
+                }
+                planned.push(PlannedEntry {
+                    name,
+                    source: Some(item_path.to_path_buf()),
+                    is_dir,
+                    size,
+                    modified,
+                });
+            }
+        }
+
+        if symlinks > 0 {
+            warnings.push(format!(
+                "{symlinks} symbolic link{} skipped",
+                if symlinks == 1 { "" } else { "s" }
+            ));
+        }
+        if planned.is_empty() {
+            return Err(ArchonError::Configuration(
+                "There are no files to add after applying filters".into(),
+            ));
+        }
+        planned.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok((planned, warnings))
     }
 
     fn open(&self, path: &Path) -> ArchonResult<(ZipArchive<File>, u64)> {
@@ -301,20 +413,20 @@ impl ArchiveEngine for ZipEngine {
             extensions: vec!["zip".into()],
             can_read: true,
             can_create: true,
-            can_modify: false,
+            can_modify: true,
             can_test: true,
             encryption: true,
             multi_volume: false,
             status: CapabilityStatus::Supported,
-            notes: "Read, create, extract and test. Store or Deflate compression. AES-256 (AE-2) encryption for new archives, and decryption of AES/ZipCrypto archives. Modifying existing archives and split ZIP volumes are not implemented in Phase 1.".into(),
+            notes: "Read, create, add/remove entries, extract and test. Store or Deflate compression. AES-256 (AE-2) encryption for new archives, and decryption of AES/ZipCrypto archives. Modifying encrypted archives is not supported yet. Split ZIP volumes are not implemented; Archon offers application-level volume splitting instead.".into(),
         }]
     }
 
-    fn list(&self, archive: &Path) -> ArchonResult<ArchiveListing> {
+    fn list(&self, archive: &Path, _password: Option<&str>) -> ArchonResult<ArchiveListing> {
         self.read_listing(archive)
     }
 
-    fn info(&self, archive: &Path) -> ArchonResult<ArchiveInfo> {
+    fn info(&self, archive: &Path, _password: Option<&str>) -> ArchonResult<ArchiveInfo> {
         let listing = self.read_listing(archive)?;
         let file_count = listing.entries.iter().filter(|entry| !entry.is_dir).count();
         let dir_count = listing.entries.iter().filter(|entry| entry.is_dir).count();
@@ -368,10 +480,12 @@ impl ArchiveEngine for ZipEngine {
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         if !parent.exists() {
-            return Err(ArchonError::Configuration(format!(
-                "The output folder does not exist: {}",
-                parent.display()
-            )));
+            fs::create_dir_all(parent).map_err(|error| {
+                ArchonError::Io(format!(
+                    "Cannot create the output folder {}: {error}",
+                    parent.display()
+                ))
+            })?;
         }
         if options.output.exists() && !options.overwrite_output {
             return Err(ArchonError::Conflict(format!(
@@ -669,6 +783,356 @@ impl ArchiveEngine for ZipEngine {
             elapsed_ms: started.elapsed().as_millis(),
             warnings,
         })
+    }
+
+    fn add_entries(
+        &self,
+        archive: &Path,
+        sources: &[PathBuf],
+        ctx: &OperationContext,
+    ) -> ArchonResult<CreateReport> {
+        let started = Instant::now();
+        ctx.check_cancelled()?;
+
+        if sources.is_empty() {
+            return Err(ArchonError::Configuration(
+                "Select at least one file or folder to add".into(),
+            ));
+        }
+        if archive.as_os_str().is_empty() {
+            return Err(ArchonError::Configuration("Choose an archive path".into()));
+        }
+        if archive.is_dir() {
+            return Err(ArchonError::Configuration(
+                "The archive path is a folder; choose a file name".into(),
+            ));
+        }
+
+        let parent = archive
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|error| {
+                ArchonError::Io(format!("Cannot create {}: {error}", parent.display()))
+            })?;
+        }
+
+        if !archive.exists() {
+            let options = CreateOptions {
+                sources: sources.to_vec(),
+                output: archive.to_path_buf(),
+                format: ArchiveFormat::Zip,
+                preset: CompressionPreset::Normal,
+                method: None,
+                level: None,
+                password: None,
+                exclude: Vec::new(),
+                overwrite_output: false,
+            };
+            return self.create(&options, ctx);
+        }
+
+        let (mut existing, _) = self.open(archive)?;
+        for index in 0..existing.len() {
+            let file = existing.by_index_raw(index)?;
+            if file.encrypted() {
+                return Err(ArchonError::UnsupportedOperation(
+                    "Adding entries to an encrypted ZIP archive is not supported yet. Extract the archive and create a new one instead."
+                        .into(),
+                ));
+            }
+        }
+
+        let (additions, mut warnings) = self.collect_additions(sources, archive, ctx)?;
+        let replacement: HashSet<String> = additions
+            .iter()
+            .map(|entry| entry.name.to_lowercase())
+            .collect();
+        let addition_size: u64 = additions.iter().map(|entry| entry.size).sum();
+        let mut total_size = 0_u64;
+        let mut file_count = 0_usize;
+        let mut dir_count = 0_usize;
+        for index in 0..existing.len() {
+            let file = existing.by_index_raw(index)?;
+            let name = raw_entry_name(&file);
+            if replacement.contains(&name.trim_end_matches('/').to_lowercase()) {
+                continue;
+            }
+            if file.is_dir() || name.ends_with('/') {
+                dir_count += 1;
+            } else {
+                file_count += 1;
+                total_size = total_size.saturating_add(file.size());
+            }
+        }
+        for entry in &additions {
+            if entry.is_dir {
+                dir_count += 1;
+            } else {
+                file_count += 1;
+                total_size = total_size.saturating_add(entry.size);
+            }
+        }
+        let addition_count = additions.len();
+
+        ctx.report(
+            ProgressPhase::Compressing,
+            0,
+            existing.len() + addition_count,
+            None,
+            0,
+            addition_size,
+        );
+
+        let (temp_file, temp_path) = create_temp_file(parent)?;
+        let mut writer = ZipWriter::new(BufWriter::new(temp_file));
+        let mut bytes_done = 0_u64;
+        let mut kept = 0_usize;
+
+        let copy_result = (|| -> ArchonResult<()> {
+            for index in 0..existing.len() {
+                ctx.check_cancelled()?;
+                let file = existing.by_index_raw(index)?;
+                let name = raw_entry_name(&file);
+                if replacement.contains(&name.trim_end_matches('/').to_lowercase()) {
+                    continue;
+                }
+                writer.raw_copy_file(file)?;
+                kept += 1;
+            }
+
+            for (position, entry) in additions.iter().enumerate() {
+                ctx.check_cancelled()?;
+                let mut options = SimpleFileOptions::default()
+                    .compression_method(if entry.is_dir {
+                        CompressionMethod::Stored
+                    } else {
+                        CompressionMethod::Deflated
+                    })
+                    .last_modified_time(entry.modified.unwrap_or_default())
+                    .large_file(entry.size > u32::MAX as u64);
+
+                if !entry.is_dir {
+                    options = options.compression_level(Some(6));
+                }
+
+                if entry.is_dir {
+                    writer.add_directory(&entry.name, options)?;
+                } else {
+                    let source = entry
+                        .source
+                        .as_ref()
+                        .expect("added file entry has a source");
+                    let mut input = File::open(source).map_err(|error| {
+                        ArchonError::Io(format!("Cannot open {}: {error}", source.display()))
+                    })?;
+                    writer.start_file(&entry.name, options)?;
+                    copy_with_progress(
+                        &mut input,
+                        &mut writer,
+                        ctx,
+                        ProgressPhase::Compressing,
+                        position + 1,
+                        addition_count,
+                        &entry.name,
+                        &mut bytes_done,
+                        addition_size,
+                    )?;
+                }
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = copy_result {
+            drop(writer);
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+
+        let buffered = match writer.finish() {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = fs::remove_file(&temp_path);
+                return Err(ArchonError::from(error));
+            }
+        };
+        let file = buffered.into_inner().map_err(|error| {
+            let _ = fs::remove_file(&temp_path);
+            ArchonError::Io(format!("Cannot finalise {}: {error}", temp_path.display()))
+        })?;
+        if let Err(error) = file.sync_all() {
+            drop(file);
+            let _ = fs::remove_file(&temp_path);
+            return Err(ArchonError::Io(format!(
+                "Cannot flush {}: {error}",
+                temp_path.display()
+            )));
+        }
+        drop(file);
+        drop(existing);
+
+        if archive.exists() {
+            fs::remove_file(archive).map_err(|error| {
+                let _ = fs::remove_file(&temp_path);
+                ArchonError::Io(format!("Cannot replace {}: {error}", archive.display()))
+            })?;
+        }
+        if let Err(error) = fs::rename(&temp_path, archive) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(ArchonError::Io(format!(
+                "Cannot move the updated archive to {}: {error}",
+                archive.display()
+            )));
+        }
+
+        if kept > 0 {
+            warnings.push(format!(
+                "{kept} existing entr{} preserved",
+                if kept == 1 { "y was" } else { "ies were" }
+            ));
+        }
+        let archive_size = fs::metadata(archive)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+
+        Ok(CreateReport {
+            output: archive.display().to_string(),
+            format: ArchiveFormat::Zip,
+            entry_count: kept + addition_count,
+            file_count,
+            dir_count,
+            total_size,
+            archive_size,
+            ratio: ratio(archive_size, total_size),
+            elapsed_ms: started.elapsed().as_millis(),
+            warnings,
+        })
+    }
+
+    fn remove_entries(
+        &self,
+        archive: &Path,
+        entries: &[String],
+        ctx: &OperationContext,
+    ) -> ArchonResult<()> {
+        ctx.check_cancelled()?;
+        if entries.is_empty() {
+            return Err(ArchonError::Configuration(
+                "Select at least one entry to remove".into(),
+            ));
+        }
+        let (mut existing, _) = self.open(archive)?;
+        for index in 0..existing.len() {
+            let file = existing.by_index_raw(index)?;
+            if file.encrypted() {
+                return Err(ArchonError::UnsupportedOperation(
+                    "Removing entries from an encrypted ZIP archive is not supported yet. Extract the archive and create a new one instead."
+                        .into(),
+                ));
+            }
+        }
+
+        let mut targets: Vec<String> = entries
+            .iter()
+            .map(|value| normalize_archive_path(value))
+            .filter(|value| !value.is_empty())
+            .collect();
+        targets.sort();
+        targets.dedup();
+        if targets.is_empty() {
+            return Err(ArchonError::Configuration(
+                "Select at least one entry to remove".into(),
+            ));
+        }
+
+        let matches = |name: &str| {
+            targets
+                .iter()
+                .any(|target| name == target || name.starts_with(&format!("{target}/")))
+        };
+
+        let mut removed = 0_usize;
+        let mut kept = 0_usize;
+        let parent = archive
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let (temp_file, temp_path) = create_temp_file(parent)?;
+        let mut writer = ZipWriter::new(BufWriter::new(temp_file));
+
+        let rewrite_result = (|| -> ArchonResult<()> {
+            for index in 0..existing.len() {
+                ctx.check_cancelled()?;
+                let file = existing.by_index_raw(index)?;
+                let name = raw_entry_name(&file);
+                if matches(name.trim_end_matches('/')) {
+                    removed += 1;
+                    continue;
+                }
+                writer.raw_copy_file(file)?;
+                kept += 1;
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = rewrite_result {
+            drop(writer);
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        if removed == 0 {
+            drop(writer);
+            let _ = fs::remove_file(&temp_path);
+            return Err(ArchonError::Conflict(format!(
+                "None of the selected entries exist in {}",
+                archive.display()
+            )));
+        }
+
+        let buffered = match writer.finish() {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = fs::remove_file(&temp_path);
+                return Err(ArchonError::from(error));
+            }
+        };
+        let file = buffered.into_inner().map_err(|error| {
+            let _ = fs::remove_file(&temp_path);
+            ArchonError::Io(format!("Cannot finalise {}: {error}", temp_path.display()))
+        })?;
+        if let Err(error) = file.sync_all() {
+            drop(file);
+            let _ = fs::remove_file(&temp_path);
+            return Err(ArchonError::Io(format!(
+                "Cannot flush {}: {error}",
+                temp_path.display()
+            )));
+        }
+        drop(file);
+        drop(existing);
+
+        fs::remove_file(archive).map_err(|error| {
+            let _ = fs::remove_file(&temp_path);
+            ArchonError::Io(format!("Cannot replace {}: {error}", archive.display()))
+        })?;
+        if let Err(error) = fs::rename(&temp_path, archive) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(ArchonError::Io(format!(
+                "Cannot move the updated archive to {}: {error}",
+                archive.display()
+            )));
+        }
+
+        ctx.report(
+            ProgressPhase::Finalizing,
+            removed + kept,
+            removed + kept,
+            None,
+            0,
+            0,
+        );
+        Ok(())
     }
 
     fn extract(
@@ -1188,6 +1652,13 @@ fn is_excluded(exclude: &GlobSet, name: &str) -> bool {
 fn absolute_path(path: &Path) -> ArchonResult<PathBuf> {
     std::path::absolute(path)
         .map_err(|error| ArchonError::Io(format!("Cannot resolve {}: {error}", path.display())))
+}
+
+fn raw_entry_name<R: std::io::Read + ?Sized>(file: &ZipFile<'_, R>) -> String {
+    match file.name() {
+        Ok(value) => value.replace('\\', "/"),
+        Err(_) => String::from_utf8_lossy(file.name_raw()).replace('\\', "/"),
+    }
 }
 
 fn method_label(method: CompressionMethod) -> &'static str {

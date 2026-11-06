@@ -10,7 +10,9 @@ import type {
   ExtractOptions,
   ExtractReport,
   FormatCapability,
+  JoinReport,
   ProgressEvent,
+  SplitReport,
   TestReport,
 } from "../types/archive";
 
@@ -21,12 +23,12 @@ export const api = {
     return invoke<FormatCapability[]>("format_capabilities");
   },
 
-  list(path: string): Promise<ArchiveListing> {
-    return invoke<ArchiveListing>("list_archive", { path });
+  list(path: string, password?: string): Promise<ArchiveListing> {
+    return invoke<ArchiveListing>("list_archive", { path, password });
   },
 
-  info(path: string): Promise<ArchiveInfo> {
-    return invoke<ArchiveInfo>("archive_info", { path });
+  info(path: string, password?: string): Promise<ArchiveInfo> {
+    return invoke<ArchiveInfo>("archive_info", { path, password });
   },
 
   create(jobId: string, options: CreateOptions): Promise<CreateReport> {
@@ -39,6 +41,30 @@ export const api = {
 
   test(jobId: string, path: string, password?: string): Promise<TestReport> {
     return invoke<TestReport>("test_archive", { jobId, path, password });
+  },
+
+  addEntries(
+    jobId: string,
+    archive: string,
+    sources: string[],
+  ): Promise<CreateReport> {
+    return invoke<CreateReport>("add_entries", { jobId, archive, sources });
+  },
+
+  removeEntries(
+    jobId: string,
+    archive: string,
+    entries: string[],
+  ): Promise<void> {
+    return invoke<void>("remove_entries", { jobId, archive, entries });
+  },
+
+  splitVolumes(path: string, sizeMb: number): Promise<SplitReport> {
+    return invoke<SplitReport>("split_archive_volumes", { path, sizeMb });
+  },
+
+  joinVolumes(first: string, output: string): Promise<JoinReport> {
+    return invoke<JoinReport>("join_volumes_command", { first, output });
   },
 
   cancel(jobId: string): Promise<boolean> {

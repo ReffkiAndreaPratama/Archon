@@ -1,8 +1,9 @@
 mod commands;
 
 use commands::{
-    AppState, archive_info, cancel_job, create_archive, extract_archive, format_capabilities,
-    list_archive, test_archive,
+    AppState, add_entries, archive_info, cancel_job, create_archive, extract_archive,
+    format_capabilities, join_volumes_command, list_archive, remove_entries, split_archive_volumes,
+    test_archive,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +19,10 @@ pub fn run() {
             create_archive,
             extract_archive,
             test_archive,
+            add_entries,
+            remove_entries,
+            split_archive_volumes,
+            join_volumes_command,
             cancel_job
         ])
         .run(tauri::generate_context!())

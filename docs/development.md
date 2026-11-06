@@ -40,15 +40,22 @@ scans the source tree. Warm builds are much faster.
 cargo test -p archon-core
 ```
 
-The current suite (18 tests) covers:
+The current suite (39 tests) covers:
 
 - **Unit (`security.rs`)** — traversal and absolute paths, Windows reserved names,
   alternate data streams, trailing dots/spaces, empty paths.
-- **Integration (`tests/zip_engine.rs`)** — create/list/extract/test round-trips,
-  empty folders, Store preset, excludes, Deflate levels, cancellation, AES and
-  ZipCrypto password required/wrong/correct, corrupted entries, symlink entries,
+- **ZIP integration (`tests/zip_engine.rs`, 18)** — create/list/extract/test
+  round-trips, empty folders, Store preset, excludes, Deflate levels, cancellation, AES
+  and ZipCrypto password required/wrong/correct, corrupted entries, symlink entries,
   overwrite policies, selected entries, path traversal, duplicate/case-colliding
-  entries, unsupported formats and honest errors.
+  entries, unsupported formats, add/remove modification, automatic creation on add,
+  encrypted-archive rejection and missing output folders.
+- **7Z integration (`tests/sevenz_engine.rs`, 5)** — round-trip listing/extraction/test,
+  AES-256 passwords, traversal rejection, read-only capability and refused creation.
+- **TAR integration (`tests/tar_engine.rs`, 8)** — TAR and compressed TAR variants,
+  single streams, traversal, root `.` entries, empty input and read-only capability.
+- **Split/join (`tests/split.rs`, 4)** — byte-exact round-trip, existing-part conflicts,
+  first-volume validation and zero-length sources.
 
 Tests create their own temporary directories and do not touch user data.
 
@@ -68,6 +75,17 @@ New-Item -ItemType Directory -Path "$work\src\nested" -Force | Out-Null
 & $cl test "$work\test.zip"
 & $cl extract "$work\test.zip" -o "$work\out"
 Get-ChildItem -Recurse "$work\out"
+
+# Update and prune
+"extra" | Set-Content "$work\extra.txt"
+& $cl add "$work\test.zip" "$work\extra.txt" --json
+& $cl remove "$work\test.zip" src/nested/b.txt
+& $cl list "$work\test.zip"
+
+# Split and join
+& $cl split "$work\test.zip" --size-mb 1
+& $cl join "$work\test.zip.001" -o "$work\joined.zip"
+& $cl test "$work\joined.zip"
 
 # Encrypted round-trip (password never appears in the command line)
 $env:ARCHON_PASSWORD = "smoke-test-password"

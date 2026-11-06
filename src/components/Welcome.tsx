@@ -49,8 +49,9 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
           <em>Know it&apos;s intact.</em>
         </h1>
         <p className="welcome-lede">
-          Archon is a focused archive manager built on a shared Rust engine. This Phase 1
-          build handles ZIP end-to-end — with honest format capabilities and no telemetry.
+          Archon is a focused archive manager built on a shared Rust engine. Create and update
+          ZIP archives, then browse, extract and verify 7Z and TAR — with honest format
+          capabilities and no telemetry.
         </p>
         <div className="welcome-actions">
           <button type="button" className="btn btn-primary btn-large" onClick={onOpen}>
@@ -65,6 +66,7 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
         </div>
         <div className="welcome-chips">
           <span>ZIP read / write</span>
+          <span>7Z / TAR read</span>
           <span>AES-256</span>
           <span>CRC verification</span>
           <span>Path traversal guard</span>
@@ -81,8 +83,8 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
           <div>
             <h2>{dragging ? "Release to open" : "Drop an archive here"}</h2>
             <p>
-              Drag a <code>.zip</code> into the window, or drop any file or folder while in
-              Create to add it as a source.
+              Drag an archive into the window, or drop any file or folder while in Create to
+              add it as a source.
             </p>
           </div>
           <button type="button" className="btn btn-ghost" onClick={onOpen}>
@@ -120,9 +122,9 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
       <footer className="welcome-footer">
         <span className="engine-state">
           <span className="status-dot" />
-          ZIP engine ready
+          Archive core ready
         </span>
-        <span>Only ZIP operations are enabled in this build. Other formats appear in Formats.</span>
+        <span>ZIP is writable; 7Z and TAR-family archives are read-only in this build.</span>
       </footer>
     </div>
   );

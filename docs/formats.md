@@ -3,25 +3,30 @@
 This page reflects the code in `archon-core`. The **Formats** view in the desktop app
 reads the same registry at runtime, so the UI cannot claim more than the engine does.
 
-Legend: **Yes** = implemented and tested. **No** = not implemented. **Never** = will not
-be implemented because the format is proprietary to create.
+Legend: **Yes** = implemented and tested. **Read-only** = browse, extract and verify
+only. **No** = not implemented. **Never** = will not be implemented because the format
+is proprietary to create.
 
-| Format | Read/list | Extract | Create | Test | Encryption | Multi-volume | Phase |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| ZIP | Yes | Yes | Yes | Yes | Read AES + ZipCrypto; create AES-256 (AE-2) | No | 1 |
-| 7Z | No | No | No | No | — | No | 2 (planned) |
-| RAR | No | No | **Never** | No | — | No | 3 (extraction only) |
-| RAR5 | No | No | **Never** | No | — | No | 3 (extraction only) |
-| TAR | No | No | No | No | — | No | 2 (planned) |
-| TAR.GZ / TGZ | No | No | No | No | — | No | 2 (planned) |
-| TAR.BZ2 / TBZ2 | No | No | No | No | — | No | 2 (planned) |
-| TAR.XZ / TXZ | No | No | No | No | — | No | 2 (planned) |
-| GZ | No | No | No | No | — | No | 2 (planned) |
-| BZ2 | No | No | No | No | — | No | 2 (planned) |
-| XZ | No | No | No | No | — | No | 2 (planned) |
-| ZST | No | No | No | No | — | No | later |
-| WIM | No | No | No | No | — | No | later |
-| ISO | No | No | No | No | — | No | later |
+| Format | Read/list | Extract | Create | Test | Modify | Encryption | Multi-volume | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ZIP | Yes | Yes | Yes | Yes | Yes (unencrypted) | Read AES + ZipCrypto; create AES-256 (AE-2) | Split/join only | Supported |
+| 7Z | Yes | Yes | No | Yes | No | Read AES-256 (headers and content) | No | Read-only |
+| RAR | No | No | **Never** | No | No | — | No | Planned |
+| RAR5 | No | No | **Never** | No | No | — | No | Planned |
+| TAR | Yes | Yes | No | Yes | No | — | No | Read-only |
+| TAR.GZ / TGZ | Yes | Yes | No | Yes | No | — | No | Read-only |
+| TAR.BZ2 / TBZ2 | Yes | Yes | No | Yes | No | — | No | Read-only |
+| TAR.XZ / TXZ | Yes | Yes | No | Yes | No | — | No | Read-only |
+| GZ | Yes | Yes | No | Yes | No | — | No | Read-only |
+| BZ2 | Yes | Yes | No | Yes | No | — | No | Read-only |
+| XZ | Yes | Yes | No | Yes | No | — | No | Read-only |
+| ZST | Yes | Yes | No | Yes | No | — | No | Read-only |
+| WIM | No | No | No | No | No | — | No | Planned |
+| ISO | No | No | No | No | No | — | No | Planned |
+
+"Split/join only" means Archon can split any finished file into numbered
+`.001`, `.002`, … volumes and join them back. This is **application-level** splitting,
+not the ZIP spec's multi-volume/spanned format, and is not claimed as such.
 
 ## ZIP details
 
@@ -54,22 +59,59 @@ be implemented because the format is proprietary to create.
 - Exclude globs are matched against both the full archive path and the file name.
 - Existing output is replaced only with explicit overwrite permission (`--force` / UI
   checkbox).
+- Missing output folders are created automatically.
 - Output without `.zip` is given the extension by the desktop UI; the CLI uses the
   path exactly as given.
 
+### Modifying
+
+- Add files or folders to an existing ZIP; entries with the same archive path are
+  replaced.
+- Remove individual entries or whole folders (children included).
+- `add` on a missing archive creates it, which matches WinRAR-style "update" behaviour.
+- Every change is written to a temporary file next to the archive and then swapped in,
+  so an interrupted or cancelled operation leaves the original archive intact.
+- Encrypted archives (AES or ZipCrypto) are **not** modified in place; Archon returns
+  `unsupported_operation` and suggests extracting and recreating instead.
+- Unchanged entries are copied with their original compressed bytes, so modifying a
+  large archive does not recompress everything.
+
 ### Not implemented
 
-- Adding, deleting or updating entries in an existing archive.
-- Split/multi-volume ZIP creation or extraction.
+- Split/multi-volume **ZIP** creation or extraction (use application-level split/join).
+- Modifying encrypted archives in place.
 - ZIP archives using unsupported legacy compression methods.
 - Preserving NTFS ACLs, alternate streams or symlinks.
 - Encrypting file names (the ZIP format does not support this).
+
+## 7Z details
+
+- Listing, extraction and integrity testing via `sevenz-rust2`.
+- AES-256 encrypted archives, including encrypted headers. A password is required to
+  list such an archive and is prompted for in the UI and CLI.
+- Wrong or missing passwords return `invalid_password` / `password_required`.
+- Solid archives are listed with a warning: extracting a single member may decompress
+  more data than its own size.
+- Same path-traversal, reserved-name, decompression-limit and atomic-extraction
+  safeguards as ZIP.
+- Creating or modifying 7z archives is not implemented.
+
+## TAR family and single streams
+
+- TAR, TAR.GZ, TAR.BZ2, TAR.XZ: listing, extraction and integrity testing.
+- GZ, BZ2, XZ, ZST: single-file streams are presented as a one-entry archive and
+  extracted under the stream's base name.
+- TAR stores no per-entry checksum; `test` verifies structure and decompression rather
+  than CRCs, and the UI/CLI wording reflects that.
+- No encryption support (the base formats have none).
+- Creating or modifying these formats is not implemented.
 
 ## Why RAR creation is out of scope
 
 RAR is a proprietary format. Archon will never create RAR archives, and will only
 extract them if a redistributable, legally compatible engine is integrated in a future
-phase. Phase 1 provides no RAR extraction.
+phase. This build provides no RAR extraction; RAR files are recognised and rejected
+with an honest `unsupported_format` message.
 
 ## Detection order
 

@@ -169,4 +169,18 @@ export interface RecentArchive {
   format?: string;
 }
 
-export type OperationKind = "open" | "create" | "extract" | "test";
+export interface SplitReport {
+  source: string;
+  partSize: number;
+  partCount: number;
+  totalBytes: number;
+  parts: string[];
+}
+
+export interface JoinReport {
+  output: string;
+  partCount: number;
+  totalBytes: number;
+}
+
+export type OperationKind = "open" | "create" | "extract" | "test" | "modify";

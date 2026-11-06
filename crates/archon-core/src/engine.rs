@@ -8,6 +8,8 @@ use crate::model::{
     ExtractOptions, ExtractReport, FormatCapability, TestReport,
 };
 use crate::progress::OperationContext;
+use crate::sevenz_engine::SevenZEngine;
+use crate::tar_engine::TarEngine;
 use crate::zip_engine::ZipEngine;
 
 /// Common interface every archive engine adapter must implement.
@@ -18,8 +20,8 @@ pub trait ArchiveEngine: Send + Sync {
     fn id(&self) -> &'static str;
     fn capabilities(&self) -> Vec<FormatCapability>;
 
-    fn list(&self, archive: &Path) -> ArchonResult<ArchiveListing>;
-    fn info(&self, archive: &Path) -> ArchonResult<ArchiveInfo>;
+    fn list(&self, archive: &Path, password: Option<&str>) -> ArchonResult<ArchiveListing>;
+    fn info(&self, archive: &Path, password: Option<&str>) -> ArchonResult<ArchiveInfo>;
     fn create(&self, options: &CreateOptions, ctx: &OperationContext)
     -> ArchonResult<CreateReport>;
     fn extract(
@@ -60,6 +62,8 @@ pub trait ArchiveEngine: Send + Sync {
 /// Owns the available engine adapters and the format capability registry.
 pub struct EngineRegistry {
     zip: ZipEngine,
+    tar: TarEngine,
+    sevenz: SevenZEngine,
 }
 
 impl Default for EngineRegistry {
@@ -72,11 +76,15 @@ impl EngineRegistry {
     pub fn new() -> Self {
         Self {
             zip: ZipEngine::new(),
+            tar: TarEngine::new(),
+            sevenz: SevenZEngine::new(),
         }
     }
 
     pub fn capabilities(&self) -> Vec<FormatCapability> {
         let mut formats = self.zip.capabilities();
+        formats.extend(self.tar.capabilities());
+        formats.extend(self.sevenz.capabilities());
         formats.extend(planned_capabilities());
         formats
     }
@@ -88,6 +96,15 @@ impl EngineRegistry {
         let format = detect_format(path);
         match format {
             ArchiveFormat::Zip => Ok(&self.zip),
+            ArchiveFormat::SevenZ => Ok(&self.sevenz),
+            ArchiveFormat::Tar
+            | ArchiveFormat::TarGz
+            | ArchiveFormat::TarBz2
+            | ArchiveFormat::TarXz
+            | ArchiveFormat::Gz
+            | ArchiveFormat::Bz2
+            | ArchiveFormat::Xz
+            | ArchiveFormat::Zst => Ok(&self.tar),
             ArchiveFormat::Unknown => Err(ArchonError::UnsupportedFormat(
                 "Archon could not recognise this file as a supported archive".into(),
             )),
@@ -102,12 +119,12 @@ impl EngineRegistry {
         }
     }
 
-    pub fn list(&self, path: &Path) -> ArchonResult<ArchiveListing> {
-        self.engine_for_path(path)?.list(path)
+    pub fn list(&self, path: &Path, password: Option<&str>) -> ArchonResult<ArchiveListing> {
+        self.engine_for_path(path)?.list(path, password)
     }
 
-    pub fn info(&self, path: &Path) -> ArchonResult<ArchiveInfo> {
-        self.engine_for_path(path)?.info(path)
+    pub fn info(&self, path: &Path, password: Option<&str>) -> ArchonResult<ArchiveInfo> {
+        self.engine_for_path(path)?.info(path, password)
     }
 
     pub fn extract(
@@ -135,24 +152,37 @@ impl EngineRegistry {
     ) -> ArchonResult<TestReport> {
         self.engine_for_path(archive)?.test(archive, password, ctx)
     }
+
+    pub fn add_entries(
+        &self,
+        archive: &Path,
+        sources: &[PathBuf],
+        ctx: &OperationContext,
+    ) -> ArchonResult<CreateReport> {
+        if !archive.exists() {
+            return match ArchiveFormat::from_path(archive) {
+                ArchiveFormat::Zip => self.zip.add_entries(archive, sources, ctx),
+                other => Err(unsupported_creating(other)),
+            };
+        }
+        self.engine_for_path(archive)?
+            .add_entries(archive, sources, ctx)
+    }
+
+    pub fn remove_entries(
+        &self,
+        archive: &Path,
+        entries: &[String],
+        ctx: &OperationContext,
+    ) -> ArchonResult<()> {
+        self.engine_for_path(archive)?
+            .remove_entries(archive, entries, ctx)
+    }
 }
 
 fn unsupported_reading(format: ArchiveFormat) -> ArchonError {
-    let phase = match format {
-        ArchiveFormat::SevenZ => "Phase 2",
-        ArchiveFormat::Rar | ArchiveFormat::Rar5 => "Phase 3",
-        ArchiveFormat::Tar
-        | ArchiveFormat::TarGz
-        | ArchiveFormat::TarBz2
-        | ArchiveFormat::TarXz
-        | ArchiveFormat::Gz
-        | ArchiveFormat::Bz2
-        | ArchiveFormat::Xz
-        | ArchiveFormat::Zst => "Phase 2",
-        _ => "a later phase",
-    };
     ArchonError::UnsupportedFormat(format!(
-        "{} archives are recognised, but reading them is planned for {phase} and is not available in this build. ZIP is the only readable format in Phase 1.",
+        "{} archives are recognised, but reading them is not available in this build. ZIP, 7Z, TAR-family and GZ/BZ2/XZ/ZST streams are readable.",
         format.label()
     ))
 }
@@ -164,7 +194,7 @@ fn unsupported_creating(format: ArchiveFormat) -> ArchonError {
         }
         ArchiveFormat::Zip => "ZIP creation is unavailable in this build".to_string(),
         other => format!(
-            "Creating {} archives is not implemented in this build. Phase 1 supports ZIP creation.",
+            "Creating {} archives is not implemented in this build. ZIP is the only writable format.",
             other.label()
         ),
     };
@@ -247,25 +277,13 @@ fn planned_capabilities() -> Vec<FormatCapability> {
 
     let entries = [
         (
-            F::SevenZ,
-            "7Z archives. Reading and creation are planned for Phase 2 using a 7-Zip-compatible engine.",
-        ),
-        (
             F::Rar,
-            "RAR extraction is planned for Phase 3. Creating RAR archives will not be offered.",
+            "RAR extraction is planned for a later phase. Creating RAR archives will not be offered.",
         ),
         (
             F::Rar5,
-            "RAR5 extraction is planned for Phase 3. Creating RAR archives will not be offered.",
+            "RAR5 extraction is planned for a later phase. Creating RAR archives will not be offered.",
         ),
-        (F::Tar, "Uncompressed TAR archives are planned for Phase 2."),
-        (F::TarGz, "TAR.GZ archives are planned for Phase 2."),
-        (F::TarBz2, "TAR.BZ2 archives are planned for Phase 2."),
-        (F::TarXz, "TAR.XZ archives are planned for Phase 2."),
-        (F::Gz, "Raw GZIP streams are planned for Phase 2."),
-        (F::Bz2, "Raw BZIP2 streams are planned for Phase 2."),
-        (F::Xz, "Raw XZ streams are planned for Phase 2."),
-        (F::Zst, "Zstandard streams are planned for a later phase."),
         (F::Wim, "WIM images are planned for a later phase."),
         (F::Iso, "ISO images are planned for a later phase."),
     ];

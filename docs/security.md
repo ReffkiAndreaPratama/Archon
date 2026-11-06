@@ -62,7 +62,7 @@ Default limits, applied to extraction and testing:
 | Single entry uncompressed size | 50 GiB |
 | Warnings retained in a report | 100 (then truncated with a notice) |
 
-The declared size is validated before extraction, and the ZIP reader enforces the
+The declared size is validated before extraction, and each engine enforces the
 decompressed-size limit while streaming. Data is streamed in 256 KiB chunks; files
 are never buffered in memory.
 
@@ -73,6 +73,9 @@ advisory (free space can change concurrently), so I/O errors are still handled.
 
 - Creation writes to `.archon-<pid>-<n>.tmp` in the output folder. An existing output
   is deleted only after the new archive has been finished and flushed with `sync_all`.
+- Adding or removing ZIP entries rewrites the whole archive into a temporary sibling
+  file and swaps it in only after the rewrite succeeds, so a cancelled update leaves the
+  original archive intact.
 - Extraction writes each file to a temporary sibling, flushes it, then renames it into
   place. A corrupt or truncated entry is deleted instead of being left behind.
 - If an operation is cancelled or fails, the current temporary file is removed and the
@@ -85,9 +88,10 @@ data.
 
 ### Corruption and verification
 
-`test` reads every selected entry, decrypts if needed and verifies the CRC. Corrupt
-entries are reported as typed issues; `test` exits non-zero on failure. Listing only
-reads the central directory and never executes archive content.
+`test` reads every selected entry, decrypts if needed and verifies checksums where the
+format provides them. Corrupt entries are reported as typed issues; `test` exits
+non-zero on failure. Listing only reads archive metadata and never executes archive
+content.
 
 ### Passwords
 
@@ -101,6 +105,7 @@ reads the central directory and never executes archive content.
 - ZIP AES-256 (AE-2) protects file contents but **not file names**, sizes or the
   archive structure. Legacy ZipCrypto is supported for reading but is cryptographically
   weak; do not rely on it.
+- 7Z AES-256 passwords protect both content and (when enabled by the writer) headers.
 - Password quality is the user's responsibility. Archon does not impose composition
   rules or store a recovery key.
 
@@ -117,11 +122,13 @@ reads the central directory and never executes archive content.
 
 ## Known limitations
 
-- Multi-volume (split) ZIP archives are not supported.
+- True multi-volume/spanned ZIP archives are not supported. Archon's split/join feature
+  works on finished bytes (`.001`, `.002`, …) and does not claim archive-format
+  compatibility.
 - ZIP64 is handled by the underlying `zip` crate, but archives with unknown
   decompressed sizes may be rejected by the limit checks rather than guessed.
 - No sandboxing beyond the OS process: a successfully validated path inside the chosen
   destination can still overwrite user data according to the selected overwrite policy.
-- The application is not code-signed in Phase 1. Verify downloads against the published
-  checksums.
-- No security audit has been performed. Treat Phase 1 as early software.
+- The application is not code-signed in this early build. Verify downloads against the
+  published checksums.
+- No security audit has been performed. Treat this build as early software.

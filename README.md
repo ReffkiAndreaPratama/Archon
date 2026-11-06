@@ -4,19 +4,21 @@ Archon is an independent archive manager for Windows with a native desktop UI an
 scriptable command-line companion. It is built from scratch on Tauri 2, Rust and React —
 no WinRAR code, branding, icons or other proprietary assets are used.
 
-**Status: Phase 1 — ZIP is fully implemented.** Every format Archon cannot yet read or
-create is labelled as such in the UI, the CLI and this document. Nothing is faked.
+**Status: early access — ZIP is fully implemented and writable.** 7Z and the TAR family
+(including GZ/BZ2/XZ/ZST streams) can be browsed, extracted and verified. Every format
+Archon cannot yet read or create is labelled as such in the UI, the CLI and this
+document. Nothing is faked.
 
 ## What works today
 
 | Capability | ZIP | 7Z | RAR / RAR5 | TAR family | GZ / BZ2 / XZ / ZST | WIM / ISO |
 | --- | --- | --- | --- | --- | --- | --- |
-| Browse / list | Yes | Recognised, planned | Recognised, planned | Recognised, planned | Recognised, planned | Recognised, planned |
-| Extract | Yes | No | No | No | No | No |
+| Browse / list | Yes | Yes | Recognised, planned | Yes | Yes | Recognised, planned |
+| Extract | Yes | Yes | No | Yes | Yes | No |
 | Create | Yes | No | **Never** (proprietary) | No | No | No |
-| Test / verify | Yes | No | No | No | No | No |
-| Add / remove entries | No | No | No | No | No | No |
-| Split / multi-volume | No | No | No | No | No | No |
+| Test / verify | Yes | Yes | No | Yes | Yes | No |
+| Add / remove entries | Yes (unencrypted) | No | No | No | No | No |
+| Split / multi-volume | Split + join (application-level) | Split + join | Split + join | Split + join | Split + join | Split + join |
 
 ZIP support includes:
 
@@ -24,16 +26,25 @@ ZIP support includes:
 - AES-256 (AE-2) encryption when creating archives.
 - Reading AES and legacy ZipCrypto archives; passwords can be retried in the UI.
 - Folder trees, empty folders, CRC verification and comment display.
+- Adding files/folders to an existing archive and removing entries; the archive is
+  rewritten atomically so an interrupted operation never leaves a half-written file.
+- Application-level split/join into `.001`, `.002`, … volumes. Archon does not claim
+  spanned-ZIP compatibility.
 - Path-traversal protection, Windows reserved-name rejection, symlink skipping,
   decompression limits, disk-space checks and atomic (temp-file) extraction.
-- Cancellable create, extract and test jobs with live progress.
+- Cancellable create, add, remove, extract and test jobs with live progress.
+
+7Z support includes AES-256 encrypted archives (header and content), solid-archive
+warnings and the same safety limits. TAR support covers TAR, TAR.GZ, TAR.BZ2, TAR.XZ
+and the single-stream GZ/BZ2/XZ/ZST formats. These formats are read-only in this build.
+
 
 > Archon will never create RAR archives. RAR extraction is planned for a later phase
 > through a redistributable engine.
 
 ## Screenshots
 
-Captured from the running Windows build (1220 × 800):
+Captured from the running Windows build (1220 × 749 client area):
 
 | Welcome | Archive browser |
 | --- | --- |
@@ -86,9 +97,11 @@ npm run build            # production frontend bundle
 cargo test -p archon-core
 ```
 
-The Phase 1 suite contains 18 tests: 4 unit tests for path validation and 14
-integration tests covering round-trips, AES and ZipCrypto passwords, traversal,
-collisions, corruption, cancellation, overwrite policies and unsupported formats.
+The suite contains 39 tests: 4 unit tests for path validation, plus integration tests
+for ZIP round-trips/modification (18), 7Z (5), TAR and single streams (8) and
+split/join (4). They cover AES and ZipCrypto passwords, traversal, collisions,
+corruption, cancellation, overwrite policies, encrypted-archive rejection, empty
+folders and unsupported formats.
 
 ## Command-line usage
 
@@ -103,6 +116,15 @@ archon-cli info photos.zip
 archon-cli create backup.zip .\Documents -p maximum
 archon-cli extract backup.zip -o .\restored --overwrite rename
 archon-cli test backup.zip
+
+# Update and prune an existing ZIP (add creates the archive when absent)
+archon-cli add backup.zip .\extra --json
+archon-cli remove backup.zip docs/old
+
+# Application-level volumes: split, then join
+archon-cli split backup.zip --size-mb 25
+archon-cli join backup.zip.001 -o backup-restored.zip
+
 archon-cli list photos.zip --json
 ```
 
@@ -113,6 +135,11 @@ Useful `create` options: `--preset store|fast|normal|maximum|ultra`,
 Useful `extract` options: `--entry <path>` (repeatable; folders include their
 children), `--overwrite overwrite|skip|rename` (default `rename`), `--flat` to
 drop folders, `-o/--output <dir>`.
+
+`add` and `remove` work on unencrypted ZIP archives only. They rewrite the archive
+atomically through a temporary file, so a cancelled update leaves the original intact.
+`split` writes `.001`, `.002`, … parts next to the archive; `join` requires the `.001`
+part and refuses to overwrite an existing output.
 
 ### Passwords
 
@@ -136,13 +163,19 @@ written to logs or progress events.
 
 ## Desktop workflow
 
-1. **Archive** — open a ZIP, browse the folder tree, search, select files and
-   extract or test them. Unsupported formats are rejected with the engine's honest
+1. **Archive** — open ZIP, 7Z, TAR-family archives or GZ/BZ2/XZ/ZST streams and
+   browse the folder tree, search, select files and extract or test them. ZIP archives
+   can also be updated in place: add files/folders, remove selections and split the
+   result into numbered volumes. Encrypted archives prompt for a password, which can be
+   retried. Formats that are not implemented are rejected with the engine's honest
    “planned” error message instead of pretending to work.
 2. **Create** — add files/folders (picker or drag-and-drop), choose a destination,
    preset, optional Deflate level, excludes and AES-256 encryption.
 3. **Formats** — a live capability matrix read from the engine, so the UI cannot
    drift away from what the backend actually supports.
+
+The top bar also exposes **Join volumes**, which reassembles `.001`, `.002`, … parts
+into a single archive.
 
 Recent archives are stored locally in `localStorage`; there is no telemetry,
 account system or network access.
@@ -150,7 +183,7 @@ account system or network access.
 ## Project layout
 
 ```
-crates/archon-core/   Engine abstraction, ZIP implementation, security, limits
+crates/archon-core/   Engine abstraction, ZIP/7Z/TAR engines, split/join, security, limits
 crates/archon-cli/    `archon-cli` command-line interface
 src-tauri/            Tauri commands, state, capabilities, icons, bundling
 src/                  React + TypeScript desktop UI
@@ -161,14 +194,16 @@ See [docs/architecture.md](docs/architecture.md) for the design and data flow.
 
 ## Roadmap
 
-- **Phase 2** — TAR/TAR.GZ/TAR.BZ2/TAR.XZ, raw GZ/BZ2/XZ and 7Z via a
-  permissively licensed engine; adding/removing ZIP entries.
+- **Phase 2** — ~~TAR/TAR.GZ/TAR.BZ2/TAR.XZ, raw GZ/BZ2/XZ and 7Z reading~~ (done);
+  ~~adding/removing ZIP entries~~ (done). Remaining: writing 7Z/TAR archives.
 - **Phase 3** — RAR/RAR5 extraction through a redistributable engine. RAR
   creation is permanently out of scope.
 - **Phase 4** — Windows integration: Explorer context menu, file associations,
   installer polish and code signing.
 
-Multi-volume archives are not supported in Phase 1.
+Multi-volume **ZIP** archives are still not supported. Archon instead offers
+application-level split/join of any finished archive, which is portable and does not
+pretend to be a spanned ZIP.
 
 ## Security
 

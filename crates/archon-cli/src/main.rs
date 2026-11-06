@@ -3,6 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use archon_core::split::{join_volumes, split_archive};
 use archon_core::{
     ArchiveFormat, ArchiveInfo, ArchiveListing, CompressionPreset, CreateOptions, CreateReport,
     EngineRegistry, ExtractOptions, ExtractReport, OperationContext, OverwritePolicy, Progress,
@@ -15,9 +16,10 @@ use zeroize::Zeroizing;
 #[command(
     name = "archon-cli",
     version,
-    about = "Archon - universal archive manager (Phase 1: ZIP)",
+    about = "Archon - universal archive manager",
     long_about = "Archon is an archive manager with a shared engine core for the desktop app and CLI. \
-This build supports browsing, creating, extracting and testing ZIP archives, including AES-256 encrypted archives. \
+This build browses and extracts ZIP, 7Z, TAR-family archives and GZ/BZ2/XZ/ZST streams. \
+ZIP archives can be created, updated, pruned and tested, including AES-256 encrypted archives. \
 Passwords are read from ARCHON_PASSWORD or stdin, never from the command line."
 )]
 struct Cli {
@@ -33,9 +35,19 @@ struct Cli {
 enum Command {
     /// List the contents of an archive.
     #[command(alias = "ls")]
-    List { archive: PathBuf },
+    List {
+        archive: PathBuf,
+        /// Read the password from stdin instead of ARCHON_PASSWORD.
+        #[arg(long)]
+        password_stdin: bool,
+    },
     /// Show archive properties and totals.
-    Info { archive: PathBuf },
+    Info {
+        archive: PathBuf,
+        /// Read the password from stdin instead of ARCHON_PASSWORD.
+        #[arg(long)]
+        password_stdin: bool,
+    },
     /// Extract files from an archive.
     #[command(alias = "x")]
     Extract {
@@ -90,6 +102,35 @@ enum Command {
         /// Read the password from stdin instead of ARCHON_PASSWORD.
         #[arg(long)]
         password_stdin: bool,
+    },
+    /// Add files or folders to an existing ZIP archive, creating it when absent.
+    #[command(alias = "u")]
+    Add {
+        archive: PathBuf,
+        /// Files or folders to add.
+        sources: Vec<PathBuf>,
+    },
+    /// Remove entries from a ZIP archive. Folders include their children.
+    #[command(alias = "rm")]
+    Remove {
+        archive: PathBuf,
+        /// Archive paths to remove.
+        entries: Vec<String>,
+    },
+    /// Split a finished archive into numbered volumes.
+    Split {
+        archive: PathBuf,
+        /// Maximum size of each volume in megabytes.
+        #[arg(long)]
+        size_mb: u64,
+    },
+    /// Join numbered .001, .002, ... volumes back into one file.
+    Join {
+        /// The first volume, ending in .001.
+        first: PathBuf,
+        /// Destination file for the joined archive.
+        #[arg(short, long)]
+        output: PathBuf,
     },
 }
 
@@ -160,16 +201,50 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let registry = EngineRegistry::new();
     match cli.command {
-        Command::List { archive } => {
-            let listing = registry.list(&archive)?;
+        Command::List {
+            archive,
+            password_stdin,
+        } => {
+            let mut password = initial_password(password_stdin)?;
+            let mut attempts = 0;
+            let listing = loop {
+                match registry.list(&archive, password.as_ref().map(|value| value.as_str())) {
+                    Ok(listing) => break listing,
+                    Err(archon_core::ArchonError::PasswordRequired)
+                    | Err(archon_core::ArchonError::InvalidPassword)
+                        if attempts < 3 && std::io::stdin().is_terminal() && !password_stdin =>
+                    {
+                        attempts += 1;
+                        password = Some(Zeroizing::new(prompt_password("Password: ")?));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
             if cli.json {
                 print_json(&listing)?;
             } else {
                 print_listing(&listing);
             }
         }
-        Command::Info { archive } => {
-            let info = registry.info(&archive)?;
+        Command::Info {
+            archive,
+            password_stdin,
+        } => {
+            let mut password = initial_password(password_stdin)?;
+            let mut attempts = 0;
+            let info = loop {
+                match registry.info(&archive, password.as_ref().map(|value| value.as_str())) {
+                    Ok(info) => break info,
+                    Err(archon_core::ArchonError::PasswordRequired)
+                    | Err(archon_core::ArchonError::InvalidPassword)
+                        if attempts < 3 && std::io::stdin().is_terminal() && !password_stdin =>
+                    {
+                        attempts += 1;
+                        password = Some(Zeroizing::new(prompt_password("Password: ")?));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
             if cli.json {
                 print_json(&info)?;
             } else {
@@ -257,7 +332,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             if cli.json {
                 print_json(&report)?;
             } else {
-                print_create(&report);
+                print_create(&report, "Created");
             }
         }
         Command::Test {
@@ -295,6 +370,65 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     report.issues.len()
                 )
                 .into());
+            }
+        }
+        Command::Add { archive, sources } => {
+            if sources.is_empty() {
+                return Err("no input files or folders were provided".into());
+            }
+            let existed = archive.exists();
+            let report = registry.add_entries(&archive, &sources, &operation_context())?;
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                print_create(&report, if existed { "Updated" } else { "Created" });
+            }
+        }
+        Command::Remove { archive, entries } => {
+            if entries.is_empty() {
+                return Err("no archive entries were provided".into());
+            }
+            registry.remove_entries(&archive, &entries, &operation_context())?;
+            if cli.json {
+                print_json(&serde_json::json!({
+                    "archive": archive.display().to_string(),
+                    "removed": entries,
+                }))?;
+            } else {
+                println!(
+                    "Removed {} entr{} from {}",
+                    entries.len(),
+                    if entries.len() == 1 { "y" } else { "ies" },
+                    archive.display()
+                );
+            }
+        }
+        Command::Split { archive, size_mb } => {
+            if size_mb == 0 {
+                return Err("--size-mb must be greater than zero".into());
+            }
+            let report = split_archive(&archive, size_mb.saturating_mul(1024 * 1024))?;
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                println!(
+                    "Split {} into {} volume(s) of {} MiB",
+                    report.source, report.part_count, size_mb
+                );
+                for part in &report.parts {
+                    println!("  {part}");
+                }
+            }
+        }
+        Command::Join { first, output } => {
+            let report = join_volumes(&first, &output)?;
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                println!(
+                    "Joined {} volume(s) into {} ({} bytes)",
+                    report.part_count, report.output, report.total_bytes
+                );
             }
         }
     }
@@ -472,9 +606,9 @@ fn print_info(info: &ArchiveInfo) {
     }
 }
 
-fn print_create(report: &CreateReport) {
+fn print_create(report: &CreateReport, verb: &str) {
     println!(
-        "Created {} ({} entries, {} -> {}, {:.1}% saved) in {:.2}s",
+        "{verb} {} ({} entries, {} -> {}, {:.1}% saved) in {:.2}s",
         report.output,
         report.entry_count,
         human_bytes(report.total_size),
@@ -507,13 +641,9 @@ fn print_extract(report: &ExtractReport) {
 fn print_test(report: &TestReport) {
     if report.ok {
         println!(
-            "OK: {} entr{} checked ({}), {:.2}s",
+            "OK: {} file{} checked ({}), {:.2}s",
             report.entries_checked,
-            if report.entries_checked == 1 {
-                "y"
-            } else {
-                "ies"
-            },
+            if report.entries_checked == 1 { "" } else { "s" },
             human_bytes(report.bytes_checked),
             report.elapsed_ms as f64 / 1000.0
         );

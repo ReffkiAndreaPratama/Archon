@@ -9,6 +9,12 @@ graph with exact versions is in `Cargo.lock` and `package-lock.json`.
 | Component | Version | License | Use |
 | --- | --- | --- | --- |
 | [`zip`](https://crates.io/crates/zip) | 9.2.x | MIT | ZIP reading, writing, Deflate and AES |
+| [`sevenz-rust2`](https://crates.io/crates/sevenz-rust2) | 0.24.x | Apache-2.0 | 7Z reading, decompression and AES-256 |
+| [`tar`](https://crates.io/crates/tar) | 0.4.x | MIT OR Apache-2.0 | TAR listing and extraction |
+| [`flate2`](https://crates.io/crates/flate2) | 1.x | MIT OR Apache-2.0 | GZIP and Deflate decompression |
+| [`bzip2`](https://crates.io/crates/bzip2) | 0.6.x | MIT OR Apache-2.0 | BZIP2 decompression |
+| [`xz2`](https://crates.io/crates/xz2) | 0.1.x | MIT OR Apache-2.0 | XZ/LZMA decompression |
+| [`zstd`](https://crates.io/crates/zstd) | 0.14.x | BSD-3-Clause | Zstandard decompression |
 | [`tauri`](https://crates.io/crates/tauri) | 2.x | MIT OR Apache-2.0 | Desktop shell and IPC |
 | `tauri-build`, `tauri-codegen`, `tauri-macros`, `tauri-runtime*` | 2.x | MIT OR Apache-2.0 | Build and runtime support |
 | `tauri-plugin-dialog` | 2.x | MIT OR Apache-2.0 | Native file and folder pickers |

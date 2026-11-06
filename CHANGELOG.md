@@ -6,6 +6,34 @@ All notable changes to Archon are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- 7Z read support: listing, extraction and integrity testing, including AES-256
+  encrypted headers/content and solid-archive warnings.
+- TAR read support: TAR, TAR.GZ, TAR.BZ2 and TAR.XZ listing, extraction and testing,
+  plus single-stream GZ, BZ2, XZ and ZST decompression.
+- ZIP modification: add files/folders and remove entries through an atomic temporary
+  rewrite. Adding to a missing archive creates it.
+- Application-level split and join for any finished archive (`.001`, `.002`, …), in the
+  core, CLI and desktop UI. This is explicitly not spanned-ZIP support.
+- Password-aware listing and info for encrypted archives in the CLI and Tauri commands,
+  with retry prompts.
+- Automatic creation of missing output folders when creating an archive.
+
+### Changed
+
+- `ArchiveEngine::list` and `info` now accept an optional password.
+- The capability registry reports 7Z and the TAR family as read-only, and ZIP as
+  modifiable; the Formats view and README follow the registry.
+- Test suite expanded from 18 to 39 tests.
+
+### Known limitations
+
+- No creation or modification of 7Z, TAR, GZ, BZ2, XZ or ZST archives.
+- Encrypted ZIP archives cannot be modified in place; extract and recreate instead.
+- No true multi-volume/spanned ZIP support.
+- RAR/RAR5 extraction remains unimplemented; RAR creation will never be implemented.
+
 ## [0.1.0] — 2026-11-02
 
 First public Phase 1 release. ZIP is the only supported archive format.

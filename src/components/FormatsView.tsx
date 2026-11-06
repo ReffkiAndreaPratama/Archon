@@ -31,7 +31,7 @@ export function FormatsView({
   error,
   onRetry,
 }: FormatsViewProps) {
-  const supported = capabilities.filter((item) => item.status === "supported");
+  const readable = capabilities.filter((item) => item.canRead);
   const planned = capabilities.filter((item) => item.status === "planned");
   const zip = capabilities.find((item) => item.format === "zip");
 
@@ -51,14 +51,15 @@ export function FormatsView({
           <Layers3 size={19} />
         </span>
         <div>
-          <strong>Phase 1 is ZIP-only by design.</strong>
+          <strong>ZIP is writable; 7Z and TAR are read-only.</strong>
           <p>
-            Browsing, creating, extracting and testing are enabled for ZIP. Other formats are
-            recognised by signature or extension, then rejected with a concrete phase message.
+            Create, update, extract and test ZIP archives. Browse, extract and test 7Z plus
+            the TAR/GZ/BZ2/XZ/ZST family. Formats without an engine stay visible and are
+            rejected with a concrete reason.
           </p>
         </div>
         <span className="phase-banner-count">
-          {supported.length} of {capabilities.length || "—"} readable
+          {readable.length} of {capabilities.length || "—"} readable
         </span>
       </section>
 
@@ -190,7 +191,10 @@ export function FormatsView({
             <div>
               <AlertTriangle size={16} />
               <strong>Known limits</strong>
-              <span>No archive modification, split volumes or ZIP64 beyond the library defaults.</span>
+              <span>
+                Encrypted ZIPs cannot be modified in place; split volumes are application-level,
+                not spanned ZIP.
+              </span>
             </div>
           </div>
         </section>

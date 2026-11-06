@@ -36,21 +36,24 @@ Dependencies are pinned in `Cargo.lock` and `package-lock.json`.
 ```rust
 fn id(&self) -> &'static str;
 fn capabilities(&self) -> Vec<FormatCapability>;
-fn list(&self, archive: &Path) -> ArchonResult<ArchiveListing>;
-fn info(&self, archive: &Path) -> ArchonResult<ArchiveInfo>;
+fn list(&self, archive: &Path, password: Option<&str>) -> ArchonResult<ArchiveListing>;
+fn info(&self, archive: &Path, password: Option<&str>) -> ArchonResult<ArchiveInfo>;
 fn create(&self, options: &CreateOptions, ctx: &OperationContext) -> ArchonResult<CreateReport>;
 fn extract(&self, options: &ExtractOptions, ctx: &OperationContext) -> ArchonResult<ExtractReport>;
 fn test(&self, archive: &Path, password: Option<&str>, ctx: &OperationContext) -> ArchonResult<TestReport>;
 ```
 
 `add_entries` and `remove_entries` exist with default implementations that return
-`NotImplemented`; no build currently overrides them. This makes the Phase 1 boundary
-explicit instead of silently doing nothing.
+`NotImplemented`. The ZIP engine overrides both; every other engine keeps the default.
+This makes each capability boundary explicit instead of silently doing nothing.
 
-`EngineRegistry` owns the adapters and provides the capability registry. Formats with
-no engine are still recognised (by magic bytes first, then extension) and produce a
-typed `unsupported_format` error explaining which phase is planned. RAR creation is
-permanently excluded.
+`EngineRegistry` owns the adapters (`ZipEngine`, `SevenZEngine`, `TarEngine`) and
+provides the capability registry. Formats with no engine are still recognised (by magic
+bytes first, then extension) and produce a typed `unsupported_format` error explaining
+which phase is planned. RAR creation is permanently excluded.
+
+Application-level split/join lives in `crates/archon-core/src/split.rs` rather than in
+an `ArchiveEngine`: it operates on finished bytes and is deliberately format-agnostic.
 
 ### Error model
 
@@ -79,8 +82,25 @@ for display. The CLI prints the human message and exits non-zero.
 - **Extraction:** fully plans and validates targets, checks limits and free space,
   then streams entries to temporary files.
 - **Test:** streams every selected entry through the decompressor and checks the CRC.
-- **Not implemented:** modifying existing archives, split volumes, data descriptors
-  with unknown sizes beyond the crate's support, and every non-ZIP format.
+- **Modify:** adding or removing entries rewrites the archive into a temporary file
+  beside it, copying unchanged entries with `raw_copy_file` so they are not
+  recompressed, then atomically renames the result over the original. Encrypted
+  archives are rejected rather than silently losing their encryption.
+- **Not implemented:** encrypted-archive modification, true split/spanned ZIP volumes,
+  data descriptors with unknown sizes beyond the crate's support, and every non-ZIP
+  write path.
+
+## 7Z and TAR engines
+
+- `SevenZEngine` uses `sevenz-rust2` for listing, extraction and testing. Passwords are
+  passed through the trait; wrong or missing passwords surface as typed errors. Solid
+  archives emit a warning because single-member extraction may decode the whole block.
+- `TarEngine` handles TAR, TAR.GZ, TAR.BZ2, TAR.XZ and the single-stream GZ/BZ2/XZ/ZST
+  formats. Single streams are presented as one-entry archives.
+- Both reuse the shared security, limit, progress and temp-file extraction helpers, so
+  traversal and resource-exhaustion behaviour matches ZIP.
+- Neither engine supports creation or modification; their capability entries say
+  `ReadOnly`.
 
 ## Data flow of a desktop operation
 

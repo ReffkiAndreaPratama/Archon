@@ -142,11 +142,11 @@ export function Sidebar({
       <div className="sidebar-footer">
         <div className="phase-card">
           <div className="phase-card-top">
-            <span className="phase-chip">Phase 1</span>
+            <span className="phase-chip">Early access</span>
             <span className="phase-dot" aria-hidden="true" />
           </div>
-          <strong>ZIP engine online</strong>
-          <p>Read · create · extract · verify</p>
+          <strong>Archive core online</strong>
+          <p>ZIP write · 7Z/TAR read · verify</p>
         </div>
         <div className="sidebar-meta">
           <span>Archon v0.1.0</span>

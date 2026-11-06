@@ -12,7 +12,7 @@ const REPORT_INTERVAL: u64 = 1024 * 1024;
 /// Stream bytes while enforcing cancellation and reporting throttled progress.
 /// Large files are never buffered in memory.
 #[allow(clippy::too_many_arguments)]
-pub fn copy_with_progress<R: Read, W: Write>(
+pub fn copy_with_progress<R: Read + ?Sized, W: Write>(
     reader: &mut R,
     writer: &mut W,
     ctx: &OperationContext,

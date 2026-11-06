@@ -4,15 +4,19 @@ import {
   ChevronRight,
   ChevronUp,
   FileArchive,
+  FilePlus,
   FileWarning,
   FolderDown,
   FolderOpen,
+  FolderPlus,
   Home,
   LockKeyhole,
+  Scissors,
   Search,
   ShieldCheck,
   Square,
   SquareCheckBig,
+  Trash2,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -48,6 +52,10 @@ interface ArchiveViewProps {
   busy: boolean;
   onTest: () => void;
   onExtract: (selection: string[]) => void;
+  onAddFiles: () => void;
+  onAddFolders: () => void;
+  onRemove: (selection: string[]) => void;
+  onSplit: () => void;
   onClose: () => void;
   onReveal: () => void;
 }
@@ -73,6 +81,10 @@ export function ArchiveView({
   busy,
   onTest,
   onExtract,
+  onAddFiles,
+  onAddFolders,
+  onRemove,
+  onSplit,
   onClose,
   onReveal,
 }: ArchiveViewProps) {
@@ -116,6 +128,7 @@ export function ArchiveView({
   const savings = savedPercent(listing.totalSize, listing.totalCompressed);
   const segments = breadcrumbSegments(currentPath);
   const isSearching = Boolean(query.trim());
+  const isZip = listing.format === "zip";
 
   const navigate = (path: string) => {
     setCurrentPath(path);
@@ -208,6 +221,52 @@ export function ArchiveView({
             aria-label="Show archive in Explorer"
           >
             <FolderOpen size={17} />
+          </button>
+          {isZip ? (
+            <>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={onAddFiles}
+                disabled={busy}
+                title="Add files to this archive"
+                aria-label="Add files to this archive"
+              >
+                <FilePlus size={17} />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={onAddFolders}
+                disabled={busy}
+                title="Add a folder to this archive"
+                aria-label="Add a folder to this archive"
+              >
+                <FolderPlus size={17} />
+              </button>
+              {selectedCount > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => onRemove(Array.from(selected))}
+                  disabled={busy}
+                  title="Remove the selected entries from this archive"
+                >
+                  <Trash2 size={16} />
+                  Remove
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onSplit}
+            disabled={busy}
+            title="Split this archive into numbered volumes"
+          >
+            <Scissors size={16} />
+            Split
           </button>
           <button
             type="button"

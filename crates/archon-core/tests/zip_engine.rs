@@ -77,7 +77,7 @@ fn create_list_extract_and_test_roundtrip() {
     assert!(report.file_count >= 5);
     assert_eq!(report.format, ArchiveFormat::Zip);
 
-    let listing = engine.list(&archive).unwrap();
+    let listing = engine.list(&archive, None).unwrap();
     assert_eq!(listing.format, ArchiveFormat::Zip);
     assert!(
         listing
@@ -124,7 +124,7 @@ fn create_list_extract_and_test_roundtrip() {
     assert_eq!(test.issues.len(), 0);
     assert_eq!(test.entries_checked, report.file_count);
 
-    let info = engine.info(&archive).unwrap();
+    let info = engine.info(&archive, None).unwrap();
     assert_eq!(info.entry_count, listing.entries.len());
     assert_eq!(info.file_count, report.file_count);
     assert_eq!(info.dir_count, report.dir_count);
@@ -231,7 +231,7 @@ fn aes_password_required_wrong_and_correct() {
         )
         .unwrap();
 
-    let listing = engine.list(&archive).unwrap();
+    let listing = engine.list(&archive, None).unwrap();
     assert_eq!(listing.encrypted_entries, 1);
 
     let destination = temp.path().join("no-password");
@@ -285,13 +285,16 @@ fn zipcrypto_archives_are_read_with_the_correct_password() {
         zip.finish().unwrap();
     }
 
-    let listing = engine.list(&archive).unwrap();
+    let listing = engine.list(&archive, None).unwrap();
     assert_eq!(listing.entries.len(), 1);
     assert_eq!(listing.encrypted_entries, 1);
     assert!(listing.entries[0].encrypted);
 
     let error = engine
-        .extract(&extract_options(&archive, &temp.path().join("missing")), &ctx)
+        .extract(
+            &extract_options(&archive, &temp.path().join("missing")),
+            &ctx,
+        )
         .unwrap_err();
     assert_eq!(error.code(), "password_required");
 
@@ -333,7 +336,7 @@ fn exclude_patterns_and_store_preset() {
     options.exclude = vec!["*.log".into()];
     engine.create(&options, &ctx).unwrap();
 
-    let listing = engine.list(&archive).unwrap();
+    let listing = engine.list(&archive, None).unwrap();
     let paths: Vec<&str> = listing
         .entries
         .iter()
@@ -432,9 +435,9 @@ fn unsupported_formats_are_reported_honestly() {
     let rar = temp.path().join("sample.rar");
     fs::write(&rar, b"Rar!\x1a\x07\x01\x00synthetic").unwrap();
 
-    let error = registry().list(&rar).unwrap_err();
+    let error = registry().list(&rar, None).unwrap_err();
     assert_eq!(error.code(), "unsupported_format");
-    assert!(error.to_string().contains("Phase 3"));
+    assert!(error.to_string().contains("not available in this build"));
 
     let options = CreateOptions {
         sources: vec![rar],
@@ -452,6 +455,163 @@ fn unsupported_formats_are_reported_honestly() {
         .unwrap_err();
     assert_eq!(error.code(), "unsupported_operation");
     assert!(!temp.path().join("out.rar").exists());
+}
+
+#[test]
+fn existing_archives_can_be_updated_and_pruned() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("input");
+    write_file(&source.join("keep.txt"), b"keep");
+    write_file(&source.join("nested/drop.txt"), b"drop");
+    write_file(&source.join("nested/stay.txt"), b"stay");
+    let archive = temp.path().join("modify.zip");
+    let engine = registry();
+    let ctx = OperationContext::new("modify");
+
+    engine
+        .create(&create_options(vec![source], &archive, None), &ctx)
+        .unwrap();
+
+    let extra = temp.path().join("added");
+    write_file(&extra.join("new.txt"), b"new contents");
+    write_file(&extra.join("keep.txt"), b"replacement contents");
+    let report = engine
+        .add_entries(&archive, std::slice::from_ref(&extra), &ctx)
+        .unwrap();
+    assert!(report.entry_count > 0);
+    assert!(report.file_count >= 2);
+
+    let listing = engine.list(&archive, None).unwrap();
+    let files = listing.entries.iter().filter(|entry| !entry.is_dir).count();
+    let dirs = listing.entries.iter().filter(|entry| entry.is_dir).count();
+    assert_eq!(report.total_size, listing.total_size);
+    assert_eq!(report.file_count, files);
+    assert_eq!(report.dir_count, dirs);
+    assert_eq!(report.entry_count, files + dirs);
+    assert!(
+        listing
+            .entries
+            .iter()
+            .any(|entry| entry.path == "added/new.txt")
+    );
+    assert_eq!(
+        listing
+            .entries
+            .iter()
+            .filter(|entry| entry.path == "added/keep.txt")
+            .count(),
+        1
+    );
+
+    let destination = temp.path().join("out");
+    engine
+        .extract(&extract_options(&archive, &destination), &ctx)
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(destination.join("added/keep.txt")).unwrap(),
+        "replacement contents"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("input/keep.txt")).unwrap(),
+        "keep"
+    );
+
+    engine
+        .remove_entries(&archive, &["input/nested".into()], &ctx)
+        .unwrap();
+    let listing = engine.list(&archive, None).unwrap();
+    assert!(
+        !listing
+            .entries
+            .iter()
+            .any(|entry| entry.path.starts_with("input/nested"))
+    );
+    assert!(
+        listing
+            .entries
+            .iter()
+            .any(|entry| entry.path == "input/keep.txt")
+    );
+
+    let error = engine
+        .remove_entries(&archive, &["missing.txt".into()], &ctx)
+        .unwrap_err();
+    assert_eq!(error.code(), "conflict");
+
+    let test = engine.test(&archive, None, &ctx).unwrap();
+    assert!(test.ok);
+}
+
+#[test]
+fn adding_to_a_missing_archive_creates_it() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("input");
+    write_file(&source.join("a.txt"), b"a");
+    let archive = temp.path().join("fresh.zip");
+    let engine = registry();
+
+    let report = engine
+        .add_entries(
+            &archive,
+            std::slice::from_ref(&source),
+            &OperationContext::new("fresh"),
+        )
+        .unwrap();
+    assert!(archive.exists());
+    assert_eq!(report.file_count, 1);
+    assert!(
+        engine
+            .list(&archive, None)
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| entry.path == "input/a.txt")
+    );
+}
+
+#[test]
+fn encrypted_archives_are_not_modified_in_place() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("input");
+    write_file(&source.join("a.txt"), b"a");
+    let archive = temp.path().join("secret.zip");
+    let engine = registry();
+    let ctx = OperationContext::new("encrypted-modify");
+    engine
+        .create(
+            &create_options(vec![source.clone()], &archive, Some("secret")),
+            &ctx,
+        )
+        .unwrap();
+
+    let error = engine
+        .add_entries(&archive, std::slice::from_ref(&source), &ctx)
+        .unwrap_err();
+    assert_eq!(error.code(), "unsupported_operation");
+
+    let error = engine
+        .remove_entries(&archive, &["input/a.txt".into()], &ctx)
+        .unwrap_err();
+    assert_eq!(error.code(), "unsupported_operation");
+}
+
+#[test]
+fn create_creates_missing_output_folders() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("input");
+    write_file(&source.join("a.txt"), b"a");
+    let archive = temp.path().join("nested/new/folder/archive.zip");
+    let engine = registry();
+
+    engine
+        .create(
+            &create_options(vec![source], &archive, None),
+            &OperationContext::new("auto-folder"),
+        )
+        .unwrap();
+
+    assert!(archive.exists());
+    assert!(temp.path().join("nested/new/folder").is_dir());
 }
 
 #[test]
