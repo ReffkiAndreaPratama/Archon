@@ -56,8 +56,9 @@ Captured from the running Windows build (1220 × 749 client area):
 
 ![Extract dialog with selection, destination, overwrite policy and password field](docs/screenshots/extract-dialog.png)
 
-The interface is a charcoal/graphite workspace with amber-copper accents and three
-views: **Archive**, **Create** and **Formats**.
+The interface is a "brutal glass" workspace: translucent graphite surfaces with
+backdrop blur, hard 1 px borders, offset shadows and amber accents across three views:
+**Archive**, **Create** and **Formats**.
 
 ## Requirements
 
