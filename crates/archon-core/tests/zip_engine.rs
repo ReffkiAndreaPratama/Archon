@@ -432,17 +432,17 @@ fn cancellation_stops_create_extract_and_test() {
 #[test]
 fn unsupported_formats_are_reported_honestly() {
     let temp = TempDir::new().unwrap();
-    let rar = temp.path().join("sample.rar");
-    fs::write(&rar, b"Rar!\x1a\x07\x01\x00synthetic").unwrap();
+    let wim = temp.path().join("sample.wim");
+    fs::write(&wim, b"MSWIM\0\0\0synthetic").unwrap();
 
-    let error = registry().list(&rar, None).unwrap_err();
+    let error = registry().list(&wim, None).unwrap_err();
     assert_eq!(error.code(), "unsupported_format");
     assert!(error.to_string().contains("not available in this build"));
 
     let options = CreateOptions {
-        sources: vec![rar],
-        output: temp.path().join("out.rar"),
-        format: ArchiveFormat::Rar,
+        sources: vec![wim],
+        output: temp.path().join("out.wim"),
+        format: ArchiveFormat::Wim,
         preset: CompressionPreset::Normal,
         method: None,
         level: None,
@@ -451,10 +451,10 @@ fn unsupported_formats_are_reported_honestly() {
         overwrite_output: false,
     };
     let error = registry()
-        .create(&options, &OperationContext::new("rar"))
+        .create(&options, &OperationContext::new("wim"))
         .unwrap_err();
     assert_eq!(error.code(), "unsupported_operation");
-    assert!(!temp.path().join("out.rar").exists());
+    assert!(!temp.path().join("out.wim").exists());
 }
 
 #[test]

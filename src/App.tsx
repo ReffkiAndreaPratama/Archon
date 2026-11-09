@@ -974,7 +974,7 @@ export default function App() {
               {formatBytes(listing.fileSize)}
             </span>
           ) : (
-            <span>ZIP writable · 7Z/TAR readable</span>
+            <span>ZIP writable · 7Z/RAR/TAR readable</span>
           )}
           <span className="statusbar-divider" />
           <span>No telemetry</span>

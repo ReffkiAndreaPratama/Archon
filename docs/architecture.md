@@ -47,10 +47,11 @@ fn test(&self, archive: &Path, password: Option<&str>, ctx: &OperationContext) -
 `NotImplemented`. The ZIP engine overrides both; every other engine keeps the default.
 This makes each capability boundary explicit instead of silently doing nothing.
 
-`EngineRegistry` owns the adapters (`ZipEngine`, `SevenZEngine`, `TarEngine`) and
-provides the capability registry. Formats with no engine are still recognised (by magic
-bytes first, then extension) and produce a typed `unsupported_format` error explaining
-which phase is planned. RAR creation is permanently excluded.
+`EngineRegistry` owns the adapters (`ZipEngine`, `SevenZEngine`, `TarEngine`,
+`RarEngine`) and provides the capability registry. Formats with no engine are still
+recognised (by magic bytes first, then extension) and produce a typed
+`unsupported_format` error explaining which phase is planned. RAR creation is
+permanently excluded; RAR/RAR5 reading is provided by the `RarEngine`.
 
 Application-level split/join lives in `crates/archon-core/src/split.rs` rather than in
 an `ArchiveEngine`: it operates on finished bytes and is deliberately format-agnostic.
@@ -90,16 +91,20 @@ for display. The CLI prints the human message and exits non-zero.
   data descriptors with unknown sizes beyond the crate's support, and every non-ZIP
   write path.
 
-## 7Z and TAR engines
+## 7Z, RAR and TAR engines
 
 - `SevenZEngine` uses `sevenz-rust2` for listing, extraction and testing. Passwords are
   passed through the trait; wrong or missing passwords surface as typed errors. Solid
   archives emit a warning because single-member extraction may decode the whole block.
+- `RarEngine` uses the pure-Rust, Apache-2.0 `rars` crate for RAR 1.5–4.x and RAR5
+  listing, extraction and testing, including encrypted content and headers. Multi-volume
+  sets are listed but extraction and testing are refused explicitly. Creation is never
+  supported.
 - `TarEngine` handles TAR, TAR.GZ, TAR.BZ2, TAR.XZ and the single-stream GZ/BZ2/XZ/ZST
   formats. Single streams are presented as one-entry archives.
-- Both reuse the shared security, limit, progress and temp-file extraction helpers, so
-  traversal and resource-exhaustion behaviour matches ZIP.
-- Neither engine supports creation or modification; their capability entries say
+- All three reuse the shared security, limit, progress and temp-file extraction helpers,
+  so traversal and resource-exhaustion behaviour matches ZIP.
+- None of these engines supports creation or modification; their capability entries say
   `ReadOnly`.
 
 ## Data flow of a desktop operation

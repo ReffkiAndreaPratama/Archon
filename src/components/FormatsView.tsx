@@ -51,10 +51,10 @@ export function FormatsView({
           <Layers3 size={19} />
         </span>
         <div>
-          <strong>ZIP is writable; 7Z and TAR are read-only.</strong>
+          <strong>ZIP is writable; 7Z, RAR and TAR are read-only.</strong>
           <p>
-            Create, update, extract and test ZIP archives. Browse, extract and test 7Z plus
-            the TAR/GZ/BZ2/XZ/ZST family. Formats without an engine stay visible and are
+            Create, update, extract and test ZIP archives. Browse, extract and test 7Z, RAR/RAR5
+            and the TAR/GZ/BZ2/XZ/ZST family. Formats without an engine stay visible and are
             rejected with a concrete reason.
           </p>
         </div>

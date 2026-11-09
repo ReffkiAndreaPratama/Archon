@@ -40,7 +40,7 @@ scans the source tree. Warm builds are much faster.
 cargo test -p archon-core
 ```
 
-The current suite (39 tests) covers:
+The current suite (49 tests) covers:
 
 - **Unit (`security.rs`)** — traversal and absolute paths, Windows reserved names,
   alternate data streams, trailing dots/spaces, empty paths.
@@ -52,6 +52,10 @@ The current suite (39 tests) covers:
   encrypted-archive rejection and missing output folders.
 - **7Z integration (`tests/sevenz_engine.rs`, 5)** — round-trip listing/extraction/test,
   AES-256 passwords, traversal rejection, read-only capability and refused creation.
+- **RAR/RAR5 integration (`tests/rar_engine.rs`, 10)** — RAR5 and RAR 1.5–4.x
+  listing/extraction/test, solid archives, encrypted content and headers, wrong/missing
+  passwords, multi-volume rejection, traversal, overwrite policies, read-only
+  capability, refused creation and cancellation.
 - **TAR integration (`tests/tar_engine.rs`, 8)** — TAR and compressed TAR variants,
   single streams, traversal, root `.` entries, empty input and read-only capability.
 - **Split/join (`tests/split.rs`, 4)** — byte-exact round-trip, existing-part conflicts,

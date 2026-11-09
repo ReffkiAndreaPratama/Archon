@@ -11,8 +11,8 @@ is proprietary to create.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ZIP | Yes | Yes | Yes | Yes | Yes (unencrypted) | Read AES + ZipCrypto; create AES-256 (AE-2) | Split/join only | Supported |
 | 7Z | Yes | Yes | No | Yes | No | Read AES-256 (headers and content) | No | Read-only |
-| RAR | No | No | **Never** | No | No | — | No | Planned |
-| RAR5 | No | No | **Never** | No | No | — | No | Planned |
+| RAR | Yes | Yes | **Never** | Yes | No | Read encrypted content and headers | Recognised, not extracted | Read-only |
+| RAR5 | Yes | Yes | **Never** | Yes | No | Read AES-256 encrypted content and headers | Recognised, not extracted | Read-only |
 | TAR | Yes | Yes | No | Yes | No | — | No | Read-only |
 | TAR.GZ / TGZ | Yes | Yes | No | Yes | No | — | No | Read-only |
 | TAR.BZ2 / TBZ2 | Yes | Yes | No | Yes | No | — | No | Read-only |
@@ -106,12 +106,22 @@ not the ZIP spec's multi-volume/spanned format, and is not claimed as such.
 - No encryption support (the base formats have none).
 - Creating or modifying these formats is not implemented.
 
+## RAR details
+
+- Listing, extraction and integrity testing via the pure-Rust `rars` engine.
+- Covers RAR 1.5–4.x and RAR5 archives, including solid archives.
+- Password-protected archives are read with AES-encrypted content and encrypted
+  headers. Wrong or missing passwords return `invalid_password` / `password_required`.
+- Multi-volume RAR sets are recognised and listed, but extraction and testing return an
+  explicit `unsupported_operation` message rather than pretending to work.
+- Same path-traversal, reserved-name, decompression-limit and atomic-extraction
+  safeguards as ZIP.
+- Creating or modifying RAR archives is not implemented.
+
 ## Why RAR creation is out of scope
 
-RAR is a proprietary format. Archon will never create RAR archives, and will only
-extract them if a redistributable, legally compatible engine is integrated in a future
-phase. This build provides no RAR extraction; RAR files are recognised and rejected
-with an honest `unsupported_format` message.
+RAR is a proprietary format. Archon will never create RAR archives. Reading is
+performed by the independent, Apache-2.0 `rars` engine; no RARLAB code is used.
 
 ## Detection order
 

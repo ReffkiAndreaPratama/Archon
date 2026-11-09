@@ -8,6 +8,7 @@ use crate::model::{
     ExtractOptions, ExtractReport, FormatCapability, TestReport,
 };
 use crate::progress::OperationContext;
+use crate::rar_engine::RarEngine;
 use crate::sevenz_engine::SevenZEngine;
 use crate::tar_engine::TarEngine;
 use crate::zip_engine::ZipEngine;
@@ -64,6 +65,7 @@ pub struct EngineRegistry {
     zip: ZipEngine,
     tar: TarEngine,
     sevenz: SevenZEngine,
+    rar: RarEngine,
 }
 
 impl Default for EngineRegistry {
@@ -78,6 +80,7 @@ impl EngineRegistry {
             zip: ZipEngine::new(),
             tar: TarEngine::new(),
             sevenz: SevenZEngine::new(),
+            rar: RarEngine::new(),
         }
     }
 
@@ -85,6 +88,7 @@ impl EngineRegistry {
         let mut formats = self.zip.capabilities();
         formats.extend(self.tar.capabilities());
         formats.extend(self.sevenz.capabilities());
+        formats.extend(self.rar.capabilities());
         formats.extend(planned_capabilities());
         formats
     }
@@ -97,6 +101,7 @@ impl EngineRegistry {
         match format {
             ArchiveFormat::Zip => Ok(&self.zip),
             ArchiveFormat::SevenZ => Ok(&self.sevenz),
+            ArchiveFormat::Rar | ArchiveFormat::Rar5 => Ok(&self.rar),
             ArchiveFormat::Tar
             | ArchiveFormat::TarGz
             | ArchiveFormat::TarBz2
@@ -182,7 +187,7 @@ impl EngineRegistry {
 
 fn unsupported_reading(format: ArchiveFormat) -> ArchonError {
     ArchonError::UnsupportedFormat(format!(
-        "{} archives are recognised, but reading them is not available in this build. ZIP, 7Z, TAR-family and GZ/BZ2/XZ/ZST streams are readable.",
+        "{} archives are recognised, but reading them is not available in this build. ZIP, 7Z, RAR/RAR5, TAR-family and GZ/BZ2/XZ/ZST streams are readable.",
         format.label()
     ))
 }
@@ -190,7 +195,7 @@ fn unsupported_reading(format: ArchiveFormat) -> ArchonError {
 fn unsupported_creating(format: ArchiveFormat) -> ArchonError {
     let message = match format {
         ArchiveFormat::Rar | ArchiveFormat::Rar5 => {
-            "Creating RAR archives is not supported. RAR is a proprietary format; Archon will only offer extraction through a redistributable engine in Phase 3.".to_string()
+            "Creating RAR archives is not supported. RAR is a proprietary format; Archon only reads it.".to_string()
         }
         ArchiveFormat::Zip => "ZIP creation is unavailable in this build".to_string(),
         other => format!(
@@ -276,14 +281,6 @@ fn planned_capabilities() -> Vec<FormatCapability> {
     use ArchiveFormat as F;
 
     let entries = [
-        (
-            F::Rar,
-            "RAR extraction is planned for a later phase. Creating RAR archives will not be offered.",
-        ),
-        (
-            F::Rar5,
-            "RAR5 extraction is planned for a later phase. Creating RAR archives will not be offered.",
-        ),
         (F::Wim, "WIM images are planned for a later phase."),
         (F::Iso, "ISO images are planned for a later phase."),
     ];

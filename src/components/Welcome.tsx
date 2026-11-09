@@ -50,7 +50,7 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
         </h1>
         <p className="welcome-lede">
           Archon is a focused archive manager built on a shared Rust engine. Create and update
-          ZIP archives, then browse, extract and verify 7Z and TAR — with honest format
+          ZIP archives, then browse, extract and verify 7Z, RAR and TAR — with honest format
           capabilities and no telemetry.
         </p>
         <div className="welcome-actions">
@@ -66,7 +66,7 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
         </div>
         <div className="welcome-chips">
           <span>ZIP read / write</span>
-          <span>7Z / TAR read</span>
+          <span>7Z / RAR / TAR read</span>
           <span>AES-256</span>
           <span>CRC verification</span>
           <span>Path traversal guard</span>
@@ -124,7 +124,7 @@ export function Welcome({ onOpen, onCreate, dragging }: WelcomeProps) {
           <span className="status-dot" />
           Archive core ready
         </span>
-        <span>ZIP is writable; 7Z and TAR-family archives are read-only in this build.</span>
+        <span>ZIP is writable; 7Z, RAR and TAR-family archives are read-only in this build.</span>
       </footer>
     </div>
   );

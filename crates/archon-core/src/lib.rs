@@ -6,6 +6,7 @@ pub mod error;
 pub mod fsutil;
 pub mod model;
 pub mod progress;
+pub mod rar_engine;
 pub mod security;
 pub mod sevenz_engine;
 pub mod split;

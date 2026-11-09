@@ -26,6 +26,7 @@ bzip2 = "0.6"
 xz2 = "0.1"
 zstd = "0.14"
 sevenz-rust2 = { version = "0.24", features = ["brotli", "deflate", "lz4", "zstd"] }
+rars = { version = "0.12.4", default-features = false, features = ["encryption"] }
 
 [dev-dependencies]
 tempfile = "3"

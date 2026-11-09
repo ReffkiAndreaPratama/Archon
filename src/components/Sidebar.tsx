@@ -146,7 +146,7 @@ export function Sidebar({
             <span className="phase-dot" aria-hidden="true" />
           </div>
           <strong>Archive core online</strong>
-          <p>ZIP write · 7Z/TAR read · verify</p>
+          <p>ZIP write · 7Z/RAR read · verify</p>
         </div>
         <div className="sidebar-meta">
           <span>Archon v0.1.0</span>

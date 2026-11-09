@@ -10,6 +10,7 @@ graph with exact versions is in `Cargo.lock` and `package-lock.json`.
 | --- | --- | --- | --- |
 | [`zip`](https://crates.io/crates/zip) | 9.2.x | MIT | ZIP reading, writing, Deflate and AES |
 | [`sevenz-rust2`](https://crates.io/crates/sevenz-rust2) | 0.24.x | Apache-2.0 | 7Z reading, decompression and AES-256 |
+| [`rars`](https://crates.io/crates/rars) | 0.12.x | Apache-2.0 | RAR/RAR5 reading, decompression and AES |
 | [`tar`](https://crates.io/crates/tar) | 0.4.x | MIT OR Apache-2.0 | TAR listing and extraction |
 | [`flate2`](https://crates.io/crates/flate2) | 1.x | MIT OR Apache-2.0 | GZIP and Deflate decompression |
 | [`bzip2`](https://crates.io/crates/bzip2) | 0.6.x | MIT OR Apache-2.0 | BZIP2 decompression |
